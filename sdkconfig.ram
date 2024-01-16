@@ -1,0 +1,7 @@
+
+CONFIG_APP_BUILD_TYPE_RAM=y
+
+CONFIG_ESP32S3_INSTRUCTION_CACHE_16KB=y
+CONFIG_ESP32S3_DATA_CACHE_16KB=y
+
+#idf.py build size && esptool.py -p /dev/tty.usbmodem2101 --no-stub load_ram build/i2s_pdm_example.bin && idf.py -b 115200 -p /dev/tty.usbmodem2101 monitor --no-reset

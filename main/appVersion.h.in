@@ -1,0 +1,9 @@
+
+#pragma once
+
+#define FW_PROJECT_NAME "@CMAKE_PROJECT_NAME@"
+#define FW_BRAND_NAME "@BRAND@"
+#define FW_MODEL_NAME "@MODEL@"
+#define FW_VERSION_STRING "@CONFIG_APP_PROJECT_VER@"
+#define FW_BUILD_DATE "@BUILD_DATE@"
+
