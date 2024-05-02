@@ -18,13 +18,15 @@
 #include "driver/gpio.h"
 #include "driver/i2c.h"
 
+#include "rom/crc.h"
+
 #include "esp_system.h"
 #include "esp_log.h"
 static const char *TAG = "storage";
 
-static const char s_magic[] = "NVRAM is Ready. ";
+static const char s_magic[] = "NVRAM is Ready.";
 
-#define NVRAM_SIZE (32 * 1024)
+#define NVRAM_SIZE (2 * 1024)
 
 #define STORAGE_SIZE (NVRAM_SIZE - sizeof(s_magic))
 #define STORAGE_ITM_COUNT (STORAGE_SIZE / sizeof(SavedItem_t))
@@ -96,6 +98,10 @@ int Storage_init(Storage_t *p) {
 				if (si->cycles == 0xFFFFFFFF)
 					continue;
 
+				const uint8_t crc = crc8_le(0, (uint8_t*)si, sizeof(*si) - sizeof(si->crc));
+				if (crc != si->crc)
+					continue;
+
 				if (next->cycles == 0xFFFFFFFF)
 					next = si;
 
@@ -117,6 +123,8 @@ int Storage_init(Storage_t *p) {
 int Storage_save(Storage_t *p) {
 
 	p->nextAddr += sizeof(p->itm);
+
+	p->itm.crc = crc8_le(0, (uint8_t*)&p->itm, sizeof(p->itm) - sizeof(p->itm.crc));
 
 	static const uint32_t maxAddr = NVRAM_SIZE - NVRAM_SIZE % sizeof(SavedItem_t) - sizeof(s_magic);
 	if (p->nextAddr >= maxAddr) // round address

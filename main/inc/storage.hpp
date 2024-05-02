@@ -10,9 +10,10 @@
 
 #include <stdint.h>
 
-typedef struct {
+typedef struct __attribute__((packed)) {
 	uint32_t cycles;
 	uint32_t uptime;
+	uint8_t crc;
 } SavedItem_t;
 
 typedef struct {

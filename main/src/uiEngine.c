@@ -36,7 +36,7 @@
 #define LCD_HOST  SPI2_HOST
 
 
-#define FB_LENGTH (BOARD_CFG_DISPLAY_WIDTH * BOARD_CFG_DISPLAY_HEIGHT / (8 * 2))
+#define FB_LENGTH (BOARD_CFG_DISPLAY_WIDTH * BOARD_CFG_DISPLAY_HEIGHT)
 #define FB_SIZE (FB_LENGTH * sizeof(lv_color_t))
 
 #define LVGL_TICK_PERIOD_MS 100
@@ -57,6 +57,7 @@ void UiEngine_unlock(void) {}
 static struct {
 	SemaphoreHandle_t lock;
 	SemaphoreHandle_t panelBusy;
+	SemaphoreHandle_t waiter;
 	TaskHandle_t tid;
 
 	lv_disp_drv_t disp_drv;
@@ -64,6 +65,11 @@ static struct {
 
 	lv_indev_drv_t indev_drv;
 	int isr_fired;
+
+	bool partialRfr;
+	lv_obj_t *cycles;
+	lv_obj_t *uptime;
+	lv_obj_t *percent;
 } s_uiInternals;
 
 static bool ep_flush_ready_cb(const esp_lcd_panel_handle_t handle, const void *edata, void *user_data) {
@@ -75,7 +81,9 @@ static bool ep_flush_ready_cb(const esp_lcd_panel_handle_t handle, const void *e
     return xHigherPriorityTaskWoken == pdTRUE;
 }
 
-static void lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_map) {
+static uint8_t *converted_buffer_black;
+static void lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_map)
+{
     esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t) drv->user_data;
     int offsetx1 = area->x1;
     int offsetx2 = area->x2;
@@ -83,11 +91,24 @@ static void lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t 
     int offsety2 = area->y2;
     ESP_LOGI(TAG, "FLUSH %d:%d %d:%d", offsetx1, offsetx2, offsety1, offsety2);
 
-    ESP_ERROR_CHECK(epaper_panel_set_bitmap_color(panel_handle, SSD1681_EPAPER_BITMAP_BLACK));
-    esp_lcd_panel_draw_bitmap(panel_handle, offsetx1, offsety1, offsetx2 + 1, offsety2 + 1, color_map);
+    int len_bits = (abs(offsetx1 - offsetx2)) * (abs(offsety1 - offsety2) + 1);
 
-//    ESP_ERROR_CHECK(epaper_panel_refresh_screen(panel_handle));
-    ESP_ERROR_CHECK(epaper_panel_refresh_partial(panel_handle));
+    memset(converted_buffer_black, 0x00, len_bits / 8);
+    for (int i = 0; i < len_bits; i++) {
+    	const int val = lv_color_brightness(color_map[i]) < 251;
+        converted_buffer_black[i / 8] |= val << (7 - (i % 8));
+    }
+
+    ESP_LOGI(TAG, "%d %d %d %d lb %d", offsetx1, offsetx2, offsety1, offsety2, len_bits);
+    ESP_ERROR_CHECK(epaper_panel_set_bitmap_color(panel_handle, SSD1681_EPAPER_BITMAP_BLACK));
+    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, offsetx1, offsety1, offsetx2 + 1, offsety2 + 1, converted_buffer_black));
+
+//    ESP_ERROR_CHECK(epaper_panel_set_bitmap_color(panel_handle, SSD1681_EPAPER_BITMAP_RED));
+//    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, offsetx1, offsety1, offsetx2 + 1, offsety2 + 1, converted_buffer_black));
+    if (s_uiInternals.partialRfr)
+		ESP_ERROR_CHECK(epaper_panel_refresh_partial(panel_handle));
+    else
+    	ESP_ERROR_CHECK(epaper_panel_refresh_screen(panel_handle));
 }
 
 static void lvgl_wait_cb(struct _lv_disp_drv_t *disp_drv) {
@@ -129,24 +150,30 @@ static void lvgl_routine(void *arg) {
     ESP_LOGI(TAG, "Started LVGL task");
 
 	lv_obj_t *scr = lv_scr_act();
-    lv_obj_t *hello_world_button = lv_btn_create(scr);
-	lv_obj_align(hello_world_button, LV_ALIGN_CENTER, 0, -15);
-	lv_obj_t *hello_world_label = lv_label_create(hello_world_button);
 
-	lv_label_set_text(hello_world_label, "Hello world!");
-	lv_obj_align(hello_world_label, LV_ALIGN_CENTER, 0, 0);
+
+	s_uiInternals.cycles = lv_label_create(scr);
+	s_uiInternals.uptime = lv_label_create(scr);
+	s_uiInternals.percent = lv_label_create(scr);
+
+	lv_label_set_text(s_uiInternals.cycles, " ...");
+	lv_label_set_text(s_uiInternals.uptime, " ...");
+	lv_label_set_text(s_uiInternals.percent, " ...");
+
+	lv_obj_align(s_uiInternals.cycles, LV_ALIGN_TOP_LEFT, 0, 0);
+	lv_obj_align_to(s_uiInternals.uptime, s_uiInternals.cycles, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
+	lv_obj_align_to(s_uiInternals.percent, s_uiInternals.uptime, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
+
 
     while (1) {
-    	int wait4 = 5;
+    	uint32_t wait4 = 5;
     	if (UiEngine_lock(-1)) {
     		wait4 = lv_timer_handler();
     		UiEngine_unlock();
     	}
-    	if (wait4 > 500)
-    		wait4 = 500;
-    	else if (wait4 < 1)
-    		wait4 = 1;
-        vTaskDelay(pdMS_TO_TICKS(wait4));
+    	if (wait4 > 50)
+    		wait4 = 50;
+    	xSemaphoreTake(s_uiInternals.waiter, pdMS_TO_TICKS(wait4));
     }
 }
 
@@ -184,7 +211,6 @@ static esp_lcd_panel_handle_t init_lcd_panel(esp_lcd_panel_io_handle_t io_handle
 
     static const esp_lcd_ssd1681_config_t epaper_ssd1681_config = {
         .busy_gpio_num = BOARD_CFG_GPIO_LCD_BUSY,
-        .non_copy_mode = true,
     };
     static const esp_lcd_panel_dev_config_t panel_config = {
         .reset_gpio_num = BOARD_CFG_GPIO_LCD_RST,
@@ -252,6 +278,9 @@ static int init_lvgl(lv_disp_drv_t *drv, lv_disp_draw_buf_t *fb, lv_indev_drv_t 
     // initialize LVGL draw buffers
     lv_disp_draw_buf_init(fb, buf1, buf2, FB_LENGTH);
 
+
+    converted_buffer_black = heap_caps_malloc(BOARD_CFG_DISPLAY_WIDTH * BOARD_CFG_DISPLAY_HEIGHT / 8, MALLOC_CAP_DMA);
+
     ESP_LOGI(TAG, "Register display driver to LVGL");
     lv_disp_drv_init(drv);
     drv->hor_res = BOARD_CFG_DISPLAY_WIDTH;
@@ -297,6 +326,55 @@ void UiEngine_unlock(void) {
 }
 
 
+int UiEngine_SetCycles(uint32_t cyc) {
+	UiEngine_lock(-1);
+	s_uiInternals.partialRfr = false;
+
+	lv_label_set_text_fmt(s_uiInternals.cycles, "Cyc: %5ld", cyc);
+	UiEngine_unlock();
+	return 0;
+}
+
+int UiEngine_SetUptime(uint32_t sec) {
+	UiEngine_lock(-1);
+	s_uiInternals.partialRfr = false;
+
+	const int sc = sec % 60;
+	sec /= 60;
+	const int m = sec % 60;
+	sec /= 60;
+	const int h = sec % 60;
+	sec /= 24;
+	const int days = ((sec * 10) % 305) / 10;
+	sec /= 30.5;
+	const int month = sec;
+
+
+    ESP_LOGI(TAG, "CUtime %ld %d %d %d %d %d", sec, sc, m, h, days, month);
+	if (month)
+		lv_label_set_text_fmt(s_uiInternals.uptime, "%d Mth %2dd", month, days);
+	else if (days)
+		lv_label_set_text_fmt(s_uiInternals.uptime, "%ddays %2dh", days, h);
+	else
+		lv_label_set_text_fmt(s_uiInternals.uptime, "%d:%02d:%02d", h, m, sc);
+	UiEngine_unlock();
+	return 0;
+}
+
+int UiEngine_SetPercent(uint32_t prc) {
+	UiEngine_lock(-1);
+	s_uiInternals.partialRfr = true;
+	lv_label_set_text_fmt(s_uiInternals.percent, "%02ld%%", prc);
+	UiEngine_unlock();
+	return 0;
+}
+
+void UiEngine_forceredraw(void) {
+	s_uiInternals.partialRfr = false;
+	xSemaphoreGive(s_uiInternals.waiter);
+}
+
+
 int UiEngine_init(void) {
 
 	if (s_uiInternals.tid)
@@ -304,13 +382,13 @@ int UiEngine_init(void) {
 
 	s_uiInternals.lock = xSemaphoreCreateRecursiveMutex();
 	s_uiInternals.panelBusy = xSemaphoreCreateBinary();
+	s_uiInternals.waiter = xSemaphoreCreateBinary();
 	xSemaphoreGive(s_uiInternals.panelBusy);
 
     esp_lcd_panel_io_handle_t io_handle = init_lcd_bus(&s_uiInternals.disp_drv);
     esp_lcd_panel_handle_t panel_handle = init_lcd_panel(io_handle, &s_uiInternals.disp_drv);
 
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
-
 
 
 	int rv = init_lvgl(&s_uiInternals.disp_drv, &s_uiInternals.disp_buf, &s_uiInternals.indev_drv, panel_handle);

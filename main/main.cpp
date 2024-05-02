@@ -32,16 +32,16 @@ typedef int (*Initer_f)();
 
 #if 0
 #define INITIAL_BLANK (300)
-#define CYCLE_TIME (100)
-#define RLY_HOLD_TIME 100
+#define CYCLE_TIME (4000)
+#define RLY_HOLD_TIME 1000
 #else
 #define INITIAL_BLANK (3 * 60 * 1000)
-#define CYCLE_TIME (6 * 1000)
+#define CYCLE_TIME (60 * 1000)
 #define RLY_HOLD_TIME 1000
 #endif
 
 static int init_gpio(void) {
-	gpio_config_t io_conf = {
+	static const gpio_config_t o_conf = {
 		.pin_bit_mask = BIT64(BOARD_CFG_GPIO_RLY_1) | BIT64(BOARD_CFG_GPIO_RLY_2) |
 			BIT64(BOARD_CFG_GPIO_LED_0)| BIT64(BOARD_CFG_GPIO_LED_2),
 		.mode = GPIO_MODE_OUTPUT,
@@ -49,8 +49,18 @@ static int init_gpio(void) {
 		.pull_down_en = GPIO_PULLDOWN_DISABLE,
 		.intr_type = GPIO_INTR_DISABLE,
 	};
+	static const gpio_config_t i_conf = {
+		.pin_bit_mask = BIT64(BOARD_CFG_GPIO_BROWNOUT),
+		.mode = GPIO_MODE_INPUT,
+		.pull_up_en = GPIO_PULLUP_DISABLE,
+		.pull_down_en = GPIO_PULLDOWN_DISABLE,
+		.intr_type = GPIO_INTR_DISABLE,
+	};
 
-	int rv = gpio_config(&io_conf);
+	int rv = gpio_config(&o_conf);
+	if (rv)
+		return rv;
+	rv = gpio_config(&i_conf);
 	if (rv)
 		return rv;
 
@@ -121,6 +131,7 @@ static void waiter(uint32_t ms) {
 		const int prc = delta * 100 / ms;
 
 		ESP_LOGD(TAG, "waiting %2d%%", prc);
+		UiEngine_SetPercent(prc);
 
 		vTaskDelay(pdMS_TO_TICKS(wait4));
 	}
@@ -148,6 +159,8 @@ extern "C" void app_main() {
 
 	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_2, 1);
 
+	UiEngine_SetCycles(st.itm.cycles);
+	UiEngine_SetUptime(st.itm.uptime);
 
 	static const esp_timer_create_args_t hbc = {
 			.callback = onHbTout,
@@ -161,10 +174,13 @@ extern "C" void app_main() {
 	ESP_ERROR_CHECK(esp_timer_start_periodic(s_heartBeatTimer, 100 * 1000ULL));
 
 	// do nothing for first 3 minutes
-//	waiter(INITIAL_BLANK);
+	waiter(INITIAL_BLANK);
 
 	const int64_t startAt = esp_timer_get_time();
 	const uint32_t worked4 = st.itm.uptime;
+
+
+	UiEngine_forceredraw();
 
 	while (1) {
 
@@ -189,11 +205,23 @@ extern "C" void app_main() {
 		st.itm.cycles += 1;
 		st.itm.uptime = worked4 + (esp_timer_get_time() - startAt) / 1000000ULL;
 
+		if (gpio_get_level((gpio_num_t)BOARD_CFG_GPIO_BROWNOUT)) {
+			ESP_LOGE(TAG, "Power loss");
+#ifndef BOARD_DEBUG_NO_BROWNOUT
+			esp_restart();
+			return; // must not get here
+#endif
+		}
+
 		int rv = Storage_save(&st);
 		if (rv)
 			ESP_LOGE(TAG, "Save failure -%X", rv);
 		else
 			ESP_LOGI(TAG, "Saved %ld cycles. Worktime %ld", st.itm.cycles, st.itm.uptime);
+
+		UiEngine_SetCycles(st.itm.cycles);
+		UiEngine_SetUptime(st.itm.uptime);
+		UiEngine_forceredraw();
 
 		waiter(CYCLE_TIME);
 	}
