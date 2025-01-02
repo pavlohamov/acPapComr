@@ -26,7 +26,7 @@ void UiEngine_unlock(void);
 
 int UiEngine_SetCycles(uint32_t cyc);
 int UiEngine_SetUptime(uint32_t cyc);
-int UiEngine_SetPercent(uint32_t prc);
+int UiEngine_SetPercent(uint32_t prc, uint32_t sec);
 
 void UiEngine_forceredraw(void);
 

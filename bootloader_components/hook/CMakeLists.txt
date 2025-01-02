@@ -8,7 +8,7 @@ idf_component_register(SRCS "hooks.c")
 # within hooks.c source file.
 
 if(NOT BOARD)
-	set(BOARD esp32_ep)
+	set(BOARD esp32s2_ep)
 	message(WARNING "no BOARD set. Set to ${BOARD}")
 endif()
 

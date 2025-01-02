@@ -7,6 +7,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
 #include "storage.hpp"
 #include "sdkconfig.h"
@@ -16,7 +17,6 @@
 #include "freertos/task.h"
 
 #include "driver/gpio.h"
-#include "driver/i2c.h"
 
 #include "rom/crc.h"
 
@@ -33,15 +33,18 @@ static const char s_magic[] = "NVRAM is Ready.";
 
 #define SWAP_16(x) (((x << 8) & 0xFF00) | ((x >> 8) & 0xFF))
 
-int Storage_init(Storage_t *p) {
+int Storage_init(i2c_master_dev_handle_t dev, Storage_t *p) {
+	if (!p) {
+		ESP_LOGE(TAG, "input is null");
+		return -EINVAL;
+	}
+
+	memset(p, 0, sizeof(*p));
 
 	char hdr[sizeof(s_magic)];
 
 	uint16_t addr = 0;
-	int rv = i2c_master_write_read_device(BOARD_CFG_I2C_BUS, BOARD_CFG_FRAM_ADDR,
-			(uint8_t*)&addr, sizeof(addr),
-			(uint8_t*)hdr, sizeof(hdr), pdMS_TO_TICKS(10));
-
+	int rv = i2c_master_transmit_receive(dev, (uint8_t*)&addr, sizeof(addr), (uint8_t*)hdr, sizeof(hdr), 10);
 	if (rv) {
 		ESP_LOGE(TAG, "i2c read failure %d", rv);
 		return rv;
@@ -52,7 +55,7 @@ int Storage_init(Storage_t *p) {
 	if (memcmp(s_magic, hdr, sizeof(hdr))) {
 		ESP_LOGI(TAG, "NVRAM must be initialized");
 
-		static const size_t burst = 1024;
+		static const size_t burst = 32;
 		uint8_t *ptr = (uint8_t*)malloc(burst + 2);
 		uint16_t *pAddr = (uint16_t*)ptr;
 		uint8_t *data = ptr + 2;
@@ -68,14 +71,14 @@ int Storage_init(Storage_t *p) {
 
 			ESP_LOGI(TAG, "Write %d/%d", i, NVRAM_SIZE);
 
-			rv = i2c_master_write_to_device(BOARD_CFG_I2C_BUS, BOARD_CFG_FRAM_ADDR, ptr, burst + 2, pdMS_TO_TICKS(100));
+
+			rv = i2c_master_transmit(dev, ptr, burst + 2, 50);
 			if (rv) {
 				ESP_LOGE(TAG, "i2c write failure %d", rv);
 			}
+			vTaskDelay(pdMS_TO_TICKS(5));
 		}
 		free(ptr);
-
-		memset(p, 0, sizeof(*p));
 	} else {
 		ESP_LOGI(TAG, "NVRAM is inited. search for next adddr");
 
@@ -83,8 +86,7 @@ int Storage_init(Storage_t *p) {
 		uint8_t *ptr = (uint8_t*)malloc(size);
 
 		uint16_t addr = SWAP_16(sizeof(s_magic));
-		rv = i2c_master_write_read_device(BOARD_CFG_I2C_BUS, BOARD_CFG_FRAM_ADDR,
-				(uint8_t*)&addr, sizeof(addr), ptr, size, pdMS_TO_TICKS(1500));
+		rv = i2c_master_transmit_receive(dev, (uint8_t*)&addr, sizeof(addr), ptr, size, 1500);
 
 		SavedItem_t *itm = (SavedItem_t*)ptr;
 		SavedItem_t *next = itm;
@@ -120,7 +122,7 @@ int Storage_init(Storage_t *p) {
 	return 0;
 }
 
-int Storage_save(Storage_t *p) {
+int Storage_save(i2c_master_dev_handle_t dev, Storage_t *p) {
 
 	p->nextAddr += sizeof(p->itm);
 
@@ -142,7 +144,8 @@ int Storage_save(Storage_t *p) {
 
 	const int addr = p->nextAddr + sizeof(s_magic);
 	*pa = SWAP_16(addr);
-	int rv = i2c_master_write_to_device(BOARD_CFG_I2C_BUS, BOARD_CFG_FRAM_ADDR, ptr, size, pdMS_TO_TICKS(50));
+	int rv = i2c_master_transmit(dev, ptr, size, 50);
+	vTaskDelay(pdMS_TO_TICKS(5));
 
 	free(ptr);
 

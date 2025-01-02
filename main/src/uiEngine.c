@@ -151,7 +151,6 @@ static void lvgl_routine(void *arg) {
 
 	lv_obj_t *scr = lv_scr_act();
 
-
 	s_uiInternals.cycles = lv_label_create(scr);
 	s_uiInternals.uptime = lv_label_create(scr);
 	s_uiInternals.percent = lv_label_create(scr);
@@ -164,17 +163,16 @@ static void lvgl_routine(void *arg) {
 	lv_obj_align_to(s_uiInternals.uptime, s_uiInternals.cycles, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
 	lv_obj_align_to(s_uiInternals.percent, s_uiInternals.uptime, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
 
-
-    while (1) {
-    	uint32_t wait4 = 5;
-    	if (UiEngine_lock(-1)) {
-    		wait4 = lv_timer_handler();
-    		UiEngine_unlock();
-    	}
-    	if (wait4 > 50)
-    		wait4 = 50;
-    	xSemaphoreTake(s_uiInternals.waiter, pdMS_TO_TICKS(wait4));
-    }
+	uint32_t wait4 = 50;
+	while (1) {
+		if (wait4 > 50)
+			wait4 = 50;
+		xSemaphoreTake(s_uiInternals.waiter, pdMS_TO_TICKS(wait4));
+		if (UiEngine_lock(-1)) {
+			wait4 = lv_timer_handler();
+			UiEngine_unlock();
+		}
+	}
 }
 
 static esp_lcd_panel_io_handle_t init_lcd_bus(void *user_ctx) {
@@ -335,10 +333,7 @@ int UiEngine_SetCycles(uint32_t cyc) {
 	return 0;
 }
 
-int UiEngine_SetUptime(uint32_t sec) {
-	UiEngine_lock(-1);
-	s_uiInternals.partialRfr = false;
-
+static void set_uptime(uint32_t sec) {
 	const int sc = sec % 60;
 	sec /= 60;
 	const int m = sec % 60;
@@ -349,22 +344,31 @@ int UiEngine_SetUptime(uint32_t sec) {
 	sec /= 30.5;
 	const int month = sec;
 
-
-    ESP_LOGI(TAG, "CUtime %ld %d %d %d %d %d", sec, sc, m, h, days, month);
+    ESP_LOGD(TAG, "CUtime %ld %d %d %d %d %d", sec, sc, m, h, days, month);
 	if (month)
 		lv_label_set_text_fmt(s_uiInternals.uptime, "%d Mth %2dd", month, days);
 	else if (days)
 		lv_label_set_text_fmt(s_uiInternals.uptime, "%ddays %2dh", days, h);
 	else
 		lv_label_set_text_fmt(s_uiInternals.uptime, "%d:%02d:%02d", h, m, sc);
+}
+
+int UiEngine_SetUptime(uint32_t sec) {
+	UiEngine_lock(-1);
+	set_uptime(sec);
+	s_uiInternals.partialRfr = false;
 	UiEngine_unlock();
 	return 0;
 }
 
-int UiEngine_SetPercent(uint32_t prc) {
-	UiEngine_lock(-1);
-	s_uiInternals.partialRfr = true;
+int UiEngine_SetPercent(uint32_t prc, uint32_t sec) {
+	if (!UiEngine_lock(100)) {
+		ESP_LOGE(TAG, "UI locked");
+		return 0;
+	}
+	s_uiInternals.partialRfr = 0;
 	lv_label_set_text_fmt(s_uiInternals.percent, "%02ld%%", prc);
+	set_uptime(sec);
 	UiEngine_unlock();
 	return 0;
 }

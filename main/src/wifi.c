@@ -44,7 +44,7 @@ static const WiFiCred_t s_creds[] = {
 };
 
 static int getConnection(wifi_ap_record_t *ap) {
-	for (int i = 0; i < sizeof(s_creds) / sizeof(*s_creds); ++i) {
+	for (size_t i = 0; i < sizeof(s_creds) / sizeof(*s_creds); ++i) {
 		if (!strcmp((char*)ap->ssid, s_creds[i].ssid))
 			return i;
 	}

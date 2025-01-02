@@ -9,8 +9,8 @@ option(FEATURE_EFUSE_EMU "Emulate efuse in ROM. Relevant for PROD" OFF)
 
 set(BOARDS_ROOT ${CMAKE_SOURCE_DIR}/boards)
 
-set(BOARD esp32_ep)
-set(IDF_TARGET esp32)
+set(BOARD esp32s2_rc1)
+set(IDF_TARGET esp32s2)
 
 if(NOT IDF_TARGET)
 	if(BOARD STREQUAL esp32s2_saola)

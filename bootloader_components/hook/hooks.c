@@ -22,6 +22,7 @@ void bootloader_before_init(void) {
     GPIO_OUTPUT_SET(BOARD_CFG_GPIO_RLY_1, 0);
     GPIO_OUTPUT_SET(BOARD_CFG_GPIO_RLY_2, 0);
 
+#ifdef BOARD_CFG_GPIO_BROWNOUT
     esp_rom_gpio_pad_select_gpio(BOARD_CFG_GPIO_BROWNOUT);
     if (GPIO_PIN_MUX_REG[BOARD_CFG_GPIO_BROWNOUT])
         PIN_INPUT_ENABLE(GPIO_PIN_MUX_REG[BOARD_CFG_GPIO_BROWNOUT]);
@@ -29,11 +30,15 @@ void bootloader_before_init(void) {
     if (GPIO_INPUT_GET(BOARD_CFG_GPIO_BROWNOUT)) {
         ESP_LOGI(TAG, "Power loss detected");
         // it would be nice to return to sleep. But bootloader is not supporting it
-#ifndef BOARD_DEBUG_NO_BROWNOUT
         while(1);
-#endif
-        return;
     }
+#endif
+
+#ifdef BOARD_CFG_GPIO_FORCE_PWR
+    esp_rom_gpio_pad_select_gpio(BOARD_CFG_GPIO_FORCE_PWR);
+    GPIO_OUTPUT_SET(BOARD_CFG_GPIO_FORCE_PWR, 1);
+#endif
+
     esp_rom_gpio_pad_select_gpio(BOARD_CFG_GPIO_LED_0);
     GPIO_OUTPUT_SET(BOARD_CFG_GPIO_LED_0, 0);
 }
