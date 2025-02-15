@@ -328,29 +328,21 @@ int UiEngine_SetCycles(uint32_t cyc) {
 	UiEngine_lock(-1);
 	s_uiInternals.partialRfr = false;
 
-	lv_label_set_text_fmt(s_uiInternals.cycles, "Cyc: %5ld", cyc);
+	lv_label_set_text_fmt(s_uiInternals.cycles, "%ld", cyc);
 	UiEngine_unlock();
 	return 0;
 }
 
 static void set_uptime(uint32_t sec) {
 	const int sc = sec % 60;
-	sec /= 60;
-	const int m = sec % 60;
-	sec /= 60;
-	const int h = sec % 60;
-	sec /= 24;
-	const int days = ((sec * 10) % 305) / 10;
-	sec /= 30.5;
-	const int month = sec;
+	const int m = (sec / 60) % 60;
+	const int h = sec / 3600;
 
-    ESP_LOGD(TAG, "CUtime %ld %d %d %d %d %d", sec, sc, m, h, days, month);
-	if (month)
-		lv_label_set_text_fmt(s_uiInternals.uptime, "%d Mth %2dd", month, days);
-	else if (days)
-		lv_label_set_text_fmt(s_uiInternals.uptime, "%ddays %2dh", days, h);
-	else
-		lv_label_set_text_fmt(s_uiInternals.uptime, "%d:%02d:%02d", h, m, sc);
+    ESP_LOGD(TAG, "CUtime %ld %d %d %d %d %d", sec, sc, m, h);
+    if (!h)
+    	lv_label_set_text_fmt(s_uiInternals.uptime, "%02dm %02ds", m, sc);
+    else
+    	lv_label_set_text_fmt(s_uiInternals.uptime, "%6d", h);
 }
 
 int UiEngine_SetUptime(uint32_t sec) {

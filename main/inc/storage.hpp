@@ -27,3 +27,5 @@ typedef struct {
 int Storage_init(i2c_master_dev_handle_t dev, Storage_t *p);
 
 int Storage_save(i2c_master_dev_handle_t dev, Storage_t *p);
+
+int Storage_wipe(i2c_master_dev_handle_t dev);

@@ -54,31 +54,7 @@ int Storage_init(i2c_master_dev_handle_t dev, Storage_t *p) {
 
 	if (memcmp(s_magic, hdr, sizeof(hdr))) {
 		ESP_LOGI(TAG, "NVRAM must be initialized");
-
-		static const size_t burst = 32;
-		uint8_t *ptr = (uint8_t*)malloc(burst + 2);
-		uint16_t *pAddr = (uint16_t*)ptr;
-		uint8_t *data = ptr + 2;
-
-		for (int i = 0; i < NVRAM_SIZE; i += burst) {
-			*pAddr = SWAP_16(i);
-			memset(data, 0xFF, burst);
-			if (!i)
-				memcpy(data, s_magic, sizeof(s_magic));
-
-			if (!i || i == burst)
-				ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, burst, ESP_LOG_WARN);
-
-			ESP_LOGI(TAG, "Write %d/%d", i, NVRAM_SIZE);
-
-
-			rv = i2c_master_transmit(dev, ptr, burst + 2, 50);
-			if (rv) {
-				ESP_LOGE(TAG, "i2c write failure %d", rv);
-			}
-			vTaskDelay(pdMS_TO_TICKS(5));
-		}
-		free(ptr);
+		Storage_wipe(dev);
 	} else {
 		ESP_LOGI(TAG, "NVRAM is inited. search for next adddr");
 
@@ -119,6 +95,34 @@ int Storage_init(i2c_master_dev_handle_t dev, Storage_t *p) {
 	}
 	ESP_LOGI(TAG, "Uptime %ld. cycles %ld. next addr %ld", p->itm.uptime, p->itm.cycles, p->nextAddr);
 
+	return 0;
+}
+
+int Storage_wipe(i2c_master_dev_handle_t dev) {
+	static const size_t burst = 32;
+	uint8_t *ptr = (uint8_t*)malloc(burst + 2);
+	uint16_t *pAddr = (uint16_t*)ptr;
+	uint8_t *data = ptr + 2;
+
+	for (int i = 0; i < NVRAM_SIZE; i += burst) {
+		*pAddr = SWAP_16(i);
+		memset(data, 0xFF, burst);
+		if (!i)
+			memcpy(data, s_magic, sizeof(s_magic));
+
+		if (!i || i == burst)
+			ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, burst, ESP_LOG_WARN);
+
+		ESP_LOGI(TAG, "Write %d/%d", i, NVRAM_SIZE);
+
+
+		int rv = i2c_master_transmit(dev, ptr, burst + 2, 50);
+		if (rv) {
+			ESP_LOGE(TAG, "i2c write failure %d", rv);
+		}
+		vTaskDelay(pdMS_TO_TICKS(5));
+	}
+	free(ptr);
 	return 0;
 }
 
