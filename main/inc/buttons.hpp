@@ -34,7 +34,7 @@ public:
 		return ins;
 	}
 
-	Button* add(int gpio_n, int btn, onButtonEvt_f cb, void *arg);
+	Button* add(int gpio_n, int btn, onButtonEvt_f cb, void *arg, bool invert = false);
 
 //   0 - released
 //   1 - pressed

@@ -177,6 +177,7 @@ static void onHbTout(void* arg) {
 }
 
 static int s_go2next;
+static SemaphoreHandle_t s_waitsem;
 
 static void onButtonPress(int btn, int evt, void *arg) {
 	SemaphoreHandle_t storage_lock = (SemaphoreHandle_t)arg;
@@ -184,8 +185,10 @@ static void onButtonPress(int btn, int evt, void *arg) {
 	Buttons::Wrapper &buttonHolder = Buttons::Wrapper::instance();
 	ESP_LOGE(TAG, "btn %d stt %d %d %d", btn, evt, gpio_get_level(GPIO_NUM_21), buttonHolder.pressedFor(btn));
 
-	if (buttonHolder.pressedFor(btn) < 5 * 1000) {
+	if (buttonHolder.pressedFor(btn) < 10 * 1000) {
 		s_go2next += evt == Buttons::RELEASE;
+		if (s_go2next)
+			xSemaphoreGive(s_waitsem);
 		return;
 	}
 	ESP_LOGI(TAG, "WIPING");
@@ -212,7 +215,7 @@ static void waiter(uint32_t ms, const int64_t base) {
 			prevPrc = prc;
 		}
 
-		vTaskDelay(pdMS_TO_TICKS(wait4));
+		xSemaphoreTake(s_waitsem, pdMS_TO_TICKS(wait4));
 	}
 	s_go2next = 0;
 }
@@ -234,6 +237,7 @@ extern "C" void app_main() {
 		}
 	}
 
+	s_waitsem = xSemaphoreCreateBinary();
 
 	SemaphoreHandle_t storage_lock = xSemaphoreCreateRecursiveMutex();
 	xSemaphoreGive(storage_lock);

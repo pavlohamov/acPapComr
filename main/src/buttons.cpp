@@ -33,7 +33,8 @@ enum {
 
 class Buttons::Button {
 public:
-	Button(int gpio, int btn, onButtonEvt_f cb, void *arg): _gpio((gpio_num_t)gpio), _btn(btn), _cb(cb), _arg(arg), _state(0), _pressedAt(0) {
+	Button(int gpio, int btn, onButtonEvt_f cb, void *arg, bool invert)
+	: _gpio((gpio_num_t)gpio), _btn(btn), _cb(cb), _arg(arg), _invert(invert), _state(0), _pressedAt(0), _releasedAt(0) {
 		const esp_timer_create_args_t cfg = {
 			.callback = onTout,
 			.arg = this,
@@ -61,6 +62,7 @@ private:
 	const int _btn;
 	const onButtonEvt_f _cb;
 	void *const _arg;
+	const bool _invert;
 	int _state;
 	int64_t _pressedAt;
 	int64_t _releasedAt;
@@ -69,7 +71,9 @@ public:
 	static void onButtonCb(void *arg) {
 		Button *b = reinterpret_cast<Button*>(arg);
 
-		const int state = gpio_get_level(b->_gpio);
+		int state = gpio_get_level(b->_gpio);
+		if (b->_invert)
+			state = !state;
 
 		if (state)
 			esp_timer_start_once(b->_tim, TOUT_DEBOUNCE);
@@ -125,13 +129,13 @@ Wrapper::~Wrapper() {
 		delete b;
 }
 
-Button* Wrapper::add(int pin, int btn, onButtonEvt_f cb, void *arg) {
+Button* Wrapper::add(int pin, int btn, onButtonEvt_f cb, void *arg, bool invert) {
 
 	static const gpio_config_t i_conf = {
 		.pin_bit_mask = BIT64(pin),
 		.mode = GPIO_MODE_INPUT,
-		.pull_up_en = GPIO_PULLUP_DISABLE,
-		.pull_down_en = GPIO_PULLDOWN_DISABLE,
+		.pull_up_en = !invert ? GPIO_PULLUP_DISABLE : GPIO_PULLUP_ENABLE,
+		.pull_down_en = invert ? GPIO_PULLDOWN_DISABLE : GPIO_PULLDOWN_ENABLE,
 		.intr_type = GPIO_INTR_ANYEDGE,
 	};
 	int rv = gpio_config(&i_conf);
@@ -140,7 +144,7 @@ Button* Wrapper::add(int pin, int btn, onButtonEvt_f cb, void *arg) {
 		return NULL;
 	}
 
-	Button *b = new Button(pin, btn, cb, arg);
+	Button *b = new Button(pin, btn, cb, arg, invert);
 	if (!b) {
 		ESP_LOGE(TAG, "No MEM!");
 		return NULL;

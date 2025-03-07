@@ -33,6 +33,8 @@ static const char s_magic[] = "NVRAM is Ready.";
 
 #define SWAP_16(x) (((x << 8) & 0xFF00) | ((x >> 8) & 0xFF))
 
+#define PAGE_SIZE 32
+
 int Storage_init(i2c_master_dev_handle_t dev, Storage_t *p) {
 	if (!p) {
 		ESP_LOGE(TAG, "input is null");
@@ -61,7 +63,7 @@ int Storage_init(i2c_master_dev_handle_t dev, Storage_t *p) {
 		uint32_t size = STORAGE_SIZE;
 		uint8_t *ptr = (uint8_t*)malloc(size);
 
-		uint16_t addr = SWAP_16(sizeof(s_magic));
+		addr = SWAP_16(sizeof(s_magic));
 		rv = i2c_master_transmit_receive(dev, (uint8_t*)&addr, sizeof(addr), ptr, size, 1500);
 
 		SavedItem_t *itm = (SavedItem_t*)ptr;
@@ -99,7 +101,7 @@ int Storage_init(i2c_master_dev_handle_t dev, Storage_t *p) {
 }
 
 int Storage_wipe(i2c_master_dev_handle_t dev) {
-	static const size_t burst = 32;
+	static const size_t burst = PAGE_SIZE;
 	uint8_t *ptr = (uint8_t*)malloc(burst + 2);
 	uint16_t *pAddr = (uint16_t*)ptr;
 	uint8_t *data = ptr + 2;
@@ -120,7 +122,7 @@ int Storage_wipe(i2c_master_dev_handle_t dev) {
 		if (rv) {
 			ESP_LOGE(TAG, "i2c write failure %d", rv);
 		}
-		vTaskDelay(pdMS_TO_TICKS(5));
+		vTaskDelay(pdMS_TO_TICKS(6));
 	}
 	free(ptr);
 	return 0;
@@ -136,8 +138,10 @@ int Storage_save(i2c_master_dev_handle_t dev, Storage_t *p) {
 	if (p->nextAddr >= maxAddr) // round address
 		p->nextAddr = 0;
 
-	ESP_LOGI(TAG, "Saving:Uptime %ld. cycles %ld. addr %ld", p->itm.uptime, p->itm.cycles, p->nextAddr);
+	const uint16_t start = p->nextAddr + sizeof(s_magic);
+	const uint16_t end = start + sizeof(p->itm);
 
+	ESP_LOGI(TAG, "Saving:Uptime %ld. cycles %ld. addr %ld", p->itm.uptime, p->itm.cycles, start);
 
 	static const int size = sizeof(p->itm) + 2;
 	uint8_t *ptr = (uint8_t*)malloc(size);
@@ -145,11 +149,23 @@ int Storage_save(i2c_master_dev_handle_t dev, Storage_t *p) {
 	uint8_t *data = ptr + 2;
 
 	memcpy(data, &p->itm, sizeof(p->itm));
-
-	const int addr = p->nextAddr + sizeof(s_magic);
-	*pa = SWAP_16(addr);
-	int rv = i2c_master_transmit(dev, ptr, size, 50);
-	vTaskDelay(pdMS_TO_TICKS(5));
+	*pa = SWAP_16(start);
+	int rv = 0;
+	if (start / PAGE_SIZE == end / PAGE_SIZE) {
+		rv = i2c_master_transmit(dev, ptr, size, 50);
+	} else {
+		uint16_t write = PAGE_SIZE - start % PAGE_SIZE;
+		uint16_t nextWrite = sizeof(p->itm) - write;
+		uint16_t nextPage = start + write;
+		ESP_LOGI(TAG, "Saving:not fits to 1 page %d != %d. %d + %d pga%d", start / PAGE_SIZE, end / PAGE_SIZE, write, nextWrite, nextPage);
+		i2c_master_transmit(dev, ptr, write + 2, 50);
+		vTaskDelay(pdMS_TO_TICKS(6));
+		*pa = SWAP_16(nextPage);
+		uint8_t *pitm = (uint8_t*)&p->itm;
+		memcpy(data, pitm + write, nextWrite);
+		rv = i2c_master_transmit(dev, ptr, nextWrite + 2, 50);
+	}
+	vTaskDelay(pdMS_TO_TICKS(6));
 
 	free(ptr);
 
