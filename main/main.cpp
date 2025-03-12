@@ -18,6 +18,9 @@
 
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
+#include "esp_adc/adc_continuous.h"
+#include "esp_adc/adc_cali.h"
+#include "esp_adc/adc_cali_scheme.h"
 
 #include "cmd_system.h"
 #include "cmd_nvs.h"
@@ -44,6 +47,13 @@ typedef int (*Initer_f)();
 #define CYCLE_TIME (60 * 1000)
 #define RLY_HOLD_TIME 1000
 #endif
+
+static adc_continuous_handle_t s_adc_handle = NULL;
+
+static adc_cali_handle_t s_adc_caibration = NULL;
+static uint32_t s_battVoltage;
+static int s_go2next;
+static SemaphoreHandle_t s_waitsem;
 
 static i2c_master_dev_handle_t s_i2cDev;
 
@@ -123,6 +133,122 @@ static int init_i2c() {
 	return 0;
 }
 
+static bool example_adc_calibration_init(adc_unit_t unit, adc_channel_t channel, adc_atten_t atten, adc_cali_handle_t *out_handle) {
+    adc_cali_handle_t handle = NULL;
+    esp_err_t ret = ESP_FAIL;
+    bool calibrated = false;
+
+#if ADC_CALI_SCHEME_CURVE_FITTING_SUPPORTED
+    if (!calibrated) {
+        ESP_LOGI(TAG, "calibration scheme version is %s", "Curve Fitting");
+        adc_cali_curve_fitting_config_t cali_config = {
+            .unit_id = unit,
+            .chan = channel,
+            .atten = atten,
+            .bitwidth = ADC_BITWIDTH_DEFAULT,
+        };
+        ret = adc_cali_create_scheme_curve_fitting(&cali_config, &handle);
+        if (ret == ESP_OK) {
+            calibrated = true;
+        }
+    }
+#endif
+
+#if ADC_CALI_SCHEME_LINE_FITTING_SUPPORTED
+    if (!calibrated) {
+        ESP_LOGI(TAG, "calibration scheme version is %s", "Line Fitting");
+        adc_cali_line_fitting_config_t cali_config = {
+            .unit_id = unit,
+            .atten = atten,
+            .bitwidth = ADC_BITWIDTH_DEFAULT,
+        };
+        ret = adc_cali_create_scheme_line_fitting(&cali_config, &handle);
+        if (ret == ESP_OK) {
+            calibrated = true;
+        }
+    }
+#endif
+
+    *out_handle = handle;
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "Calibration Success");
+    } else if (ret == ESP_ERR_NOT_SUPPORTED || !calibrated) {
+        ESP_LOGW(TAG, "eFuse not burnt, skip software calibration");
+    } else {
+        ESP_LOGE(TAG, "Invalid arg or no memory");
+    }
+
+    return calibrated;
+}
+
+
+static void continuous_adc_init(adc_channel_t *channel, uint8_t channel_num, adc_continuous_handle_t *out_handle) {
+
+    adc_continuous_handle_cfg_t adc_config = {
+        .max_store_buf_size = 1024,
+        .conv_frame_size = 256,
+		.flags = {
+			.flush_pool = 0,
+		}
+    };
+    adc_continuous_handle_t handle;
+    ESP_ERROR_CHECK(adc_continuous_new_handle(&adc_config, &handle));
+
+
+    adc_digi_pattern_config_t adc_pattern[SOC_ADC_PATT_LEN_MAX] = {};
+    for (int i = 0; i < channel_num; i++) {
+        adc_pattern[i].atten = ADC_ATTEN_DB_12;
+        adc_pattern[i].channel = channel[i] & 0x7;
+        adc_pattern[i].unit = ADC_UNIT_1;
+        adc_pattern[i].bit_width = SOC_ADC_DIGI_MAX_BITWIDTH;
+
+        ESP_LOGI(TAG, "adc_pattern[%d].atten is :%" PRIx8, i, adc_pattern[i].atten);
+        ESP_LOGI(TAG, "adc_pattern[%d].channel is :%" PRIx8, i, adc_pattern[i].channel);
+        ESP_LOGI(TAG, "adc_pattern[%d].unit is :%" PRIx8, i, adc_pattern[i].unit);
+    }
+    adc_continuous_config_t dig_cfg = {
+		.pattern_num = channel_num,
+		.adc_pattern = adc_pattern,
+        .sample_freq_hz = 20 * 1000,
+        .conv_mode = ADC_CONV_SINGLE_UNIT_1,
+        .format = ADC_DIGI_OUTPUT_FORMAT_TYPE1,
+    };
+    ESP_ERROR_CHECK(adc_continuous_config(handle, &dig_cfg));
+
+    *out_handle = handle;
+}
+
+static int adc_init() {
+	static adc_channel_t channel[] = { BOARD_CFG_GPIO_ADC_VIN };
+
+	continuous_adc_init(channel, ARRAY_SIZE(channel), &s_adc_handle);
+
+    example_adc_calibration_init(ADC_UNIT_1, BOARD_CFG_GPIO_ADC_VIN, ADC_ATTEN_DB_12, &s_adc_caibration);
+    return 0;
+}
+
+static bool IRAM_ATTR s_conv_done_cb(adc_continuous_handle_t handle, const adc_continuous_evt_data_t *edata, void *user_data) {
+
+	uint32_t rv = 0;
+	uint32_t sz = edata->size / SOC_ADC_DIGI_RESULT_BYTES;
+	adc_digi_output_data_t *ptr = (adc_digi_output_data_t*)edata->conv_frame_buffer;
+
+	for (size_t i = 0; i < sz; ++i) {
+		rv += ptr[i].type1.data;
+	}
+	rv /= sz;
+	s_battVoltage = rv;
+
+	if (user_data) {
+		uint32_t *adcVal = (uint32_t*)user_data;
+		*adcVal = rv;
+	}
+
+//    ESP_ERROR_CHECK(gpio_set_level(BOARD_CFG_GPIO_ENA_LDO, (rv < 3750)));
+
+    return false;
+}
+
 static int console_init() {
 
 	esp_console_repl_t *repl = NULL;
@@ -156,8 +282,9 @@ static int console_init() {
 static const Initer_f s_inits[] = {
 	init_gpio,
 	init_i2c,
+	adc_init,
 //	LogUtil_init,
-	UiEngine_init,
+//	UiEngine_init,
 //	WiFi_init,
 //	Telnet_init,
 	console_init,
@@ -175,9 +302,6 @@ static void onHbTout(void* arg) {
 	esp_timer_stop(s_heartBeatTimer);
 	esp_timer_start_periodic(s_heartBeatTimer, lvl ? 600 * 1000ULL : 100 * 1000ULL);
 }
-
-static int s_go2next;
-static SemaphoreHandle_t s_waitsem;
 
 static void onButtonPress(int btn, int evt, void *arg) {
 	SemaphoreHandle_t storage_lock = (SemaphoreHandle_t)arg;
@@ -213,6 +337,11 @@ static void waiter(uint32_t ms, const int64_t base) {
 			ESP_LOGD(TAG, "waiting %2d%% %dms", prc, wait4);
 			UiEngine_SetPercent(prc, now);
 			prevPrc = prc;
+			int voltage = 0;
+			ESP_ERROR_CHECK(adc_cali_raw_to_voltage(s_adc_caibration, s_battVoltage, &voltage));
+			voltage = voltage * 2 * BOARD_CFG_ADC_RATIO_MV + 50;
+			UiEngine_SetVoltage(voltage);
+			ESP_LOGD(TAG, "wa %d -> %d", s_battVoltage, voltage);
 		}
 
 		xSemaphoreTake(s_waitsem, pdMS_TO_TICKS(wait4));
@@ -242,6 +371,8 @@ extern "C" void app_main() {
 	SemaphoreHandle_t storage_lock = xSemaphoreCreateRecursiveMutex();
 	xSemaphoreGive(storage_lock);
 
+	gpio_install_isr_service(0);
+
 	Buttons::Wrapper &buttonHolder = Buttons::Wrapper::instance();
 	buttonHolder.add(BOARD_CFG_GPIO_USER_BTN, 0, onButtonPress, storage_lock);
 
@@ -254,10 +385,6 @@ extern "C" void app_main() {
 	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_1, 1);
 	xSemaphoreGive(storage_lock);
 
-	UiEngine_SetCycles(st.itm.cycles);
-	UiEngine_SetUptime(st.itm.uptime);
-	ESP_LOGI(TAG, "Uptime %ld. cycles %ld. next addr %ld", st.itm.uptime, st.itm.cycles, st.nextAddr);
-
 	static const esp_timer_create_args_t hbc = {
 		.callback = onHbTout,
 		.arg = NULL,
@@ -266,12 +393,29 @@ extern "C" void app_main() {
 		.skip_unhandled_events = false,
 	};
 
+	uint32_t adcVal = 0;
+
+	if (s_adc_handle) {
+		adc_continuous_evt_cbs_t cbs = {
+			.on_conv_done = s_conv_done_cb,
+			.on_pool_ovf = NULL,
+		};
+		ESP_ERROR_CHECK(adc_continuous_register_event_callbacks(s_adc_handle, &cbs, &adcVal));
+		ESP_ERROR_CHECK(adc_continuous_start(s_adc_handle));
+	}
+
 	ESP_ERROR_CHECK(esp_timer_create(&hbc, &s_heartBeatTimer));
 	ESP_ERROR_CHECK(esp_timer_start_periodic(s_heartBeatTimer, 100 * 1000ULL));
 
+	xSemaphoreTake(s_waitsem, pdMS_TO_TICKS(100));
+
+	UiEngine_init();
+	UiEngine_SetCycles(st.itm.cycles);
+	UiEngine_SetUptime(st.itm.uptime);
+	ESP_LOGI(TAG, "Uptime %ld. cycles %ld. next addr %ld", st.itm.uptime, st.itm.cycles, st.nextAddr);
+
 	ESP_LOGI(TAG, "do nothing for first 3 minutes");
 	waiter(INITIAL_BLANK, st.itm.uptime);
-//	vTaskDelay(pdMS_TO_TICKS(INITIAL_BLANK));
 	ESP_LOGI(TAG, "Waiting is done");
 
 	const int64_t startAt = esp_timer_get_time();
@@ -322,7 +466,7 @@ extern "C" void app_main() {
 
 		UiEngine_SetCycles(st.itm.cycles);
 		UiEngine_SetUptime(st.itm.uptime);
-		UiEngine_forceredraw();
+//		UiEngine_forceredraw();
 
 		waiter(CYCLE_TIME, st.itm.uptime);
 	}

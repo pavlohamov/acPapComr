@@ -70,6 +70,7 @@ static struct {
 	lv_obj_t *cycles;
 	lv_obj_t *uptime;
 	lv_obj_t *percent;
+	lv_obj_t *volts;
 } s_uiInternals;
 
 static bool ep_flush_ready_cb(const esp_lcd_panel_handle_t handle, const void *edata, void *user_data) {
@@ -148,20 +149,6 @@ static void on_lvgl_tick(void *arg) {
 
 static void lvgl_routine(void *arg) {
     ESP_LOGI(TAG, "Started LVGL task");
-
-	lv_obj_t *scr = lv_scr_act();
-
-	s_uiInternals.cycles = lv_label_create(scr);
-	s_uiInternals.uptime = lv_label_create(scr);
-	s_uiInternals.percent = lv_label_create(scr);
-
-	lv_label_set_text(s_uiInternals.cycles, " ...");
-	lv_label_set_text(s_uiInternals.uptime, " ...");
-	lv_label_set_text(s_uiInternals.percent, " ...");
-
-	lv_obj_align(s_uiInternals.cycles, LV_ALIGN_TOP_LEFT, 0, 0);
-	lv_obj_align_to(s_uiInternals.uptime, s_uiInternals.cycles, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
-	lv_obj_align_to(s_uiInternals.percent, s_uiInternals.uptime, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
 
 	uint32_t wait4 = 50;
 	while (1) {
@@ -353,6 +340,14 @@ int UiEngine_SetUptime(uint32_t sec) {
 	return 0;
 }
 
+int UiEngine_SetVoltage(uint32_t mv) {
+	mv /= 10;
+	UiEngine_lock(-1);
+	lv_label_set_text_fmt(s_uiInternals.volts, "%2ld.%02ld V", mv / 100, mv % 100);
+	UiEngine_unlock();
+	return 0;
+}
+
 int UiEngine_SetPercent(uint32_t prc, uint32_t sec) {
 	if (!UiEngine_lock(100)) {
 		ESP_LOGE(TAG, "UI locked");
@@ -386,13 +381,28 @@ int UiEngine_init(void) {
 
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
 
-
 	int rv = init_lvgl(&s_uiInternals.disp_drv, &s_uiInternals.disp_buf, &s_uiInternals.indev_drv, panel_handle);
 	if (rv) {
 		ESP_LOGE(TAG, "Failed to init lvgl %d", rv);
 		return rv;
-
 	}
+
+	lv_obj_t *scr = lv_scr_act();
+
+	s_uiInternals.cycles = lv_label_create(scr);
+	s_uiInternals.uptime = lv_label_create(scr);
+	s_uiInternals.percent = lv_label_create(scr);
+	s_uiInternals.volts = lv_label_create(scr);
+
+	lv_label_set_text(s_uiInternals.cycles, "...");
+	lv_label_set_text(s_uiInternals.uptime, "...");
+	lv_label_set_text(s_uiInternals.percent, "...");
+	lv_label_set_text(s_uiInternals.volts, "...");
+
+	lv_obj_align(s_uiInternals.cycles, LV_ALIGN_TOP_LEFT, 0, 0);
+	lv_obj_align_to(s_uiInternals.uptime, s_uiInternals.cycles, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
+	lv_obj_align_to(s_uiInternals.percent, s_uiInternals.uptime, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
+	lv_obj_align_to(s_uiInternals.volts, s_uiInternals.percent, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
 
     ESP_LOGI(TAG, "Create LVGL task");
     xTaskCreate(lvgl_routine, "LVGL", 4 * 1024, NULL, 2, &s_uiInternals.tid);

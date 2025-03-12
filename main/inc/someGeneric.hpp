@@ -28,6 +28,8 @@ int UiEngine_SetCycles(uint32_t cyc);
 int UiEngine_SetUptime(uint32_t cyc);
 int UiEngine_SetPercent(uint32_t prc, uint32_t sec);
 
+int UiEngine_SetVoltage(uint32_t mv);
+
 void UiEngine_forceredraw(void);
 
 int WiFi_init(void);
