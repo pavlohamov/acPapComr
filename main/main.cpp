@@ -41,11 +41,13 @@ typedef int (*Initer_f)();
 #if 0
 #define INITIAL_BLANK (300)
 #define CYCLE_TIME (4000)
-#define RLY_HOLD_TIME 1000
+#define RLY_PURGE_TIME_1 1000
 #else
 #define INITIAL_BLANK (3 * 60 * 1000)
-#define CYCLE_TIME (60 * 1000)
-#define RLY_HOLD_TIME 1000
+#define CYCLE_TIME (10 * 60 * 1000)
+#define RLY_PURGE_TIME_1 1000
+#define RLY_PURGE_TIME_2 RLY_PURGE_TIME_1
+#define RLY_DLY_TIME (5 * 1000)
 #endif
 
 static adc_continuous_handle_t s_adc_handle = NULL;
@@ -309,6 +311,14 @@ static void onButtonPress(int btn, int evt, void *arg) {
 	Buttons::Wrapper &buttonHolder = Buttons::Wrapper::instance();
 	ESP_LOGE(TAG, "btn %d stt %d %d %d", btn, evt, gpio_get_level(GPIO_NUM_21), buttonHolder.pressedFor(btn));
 
+	if (evt == Buttons::RELEASE) {
+		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_RLY_1, 0);
+		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_RLY_2, 0);
+	} else {
+		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_RLY_1, 1);
+		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_RLY_2, 1);
+	}
+
 	if (buttonHolder.pressedFor(btn) < 10 * 1000) {
 		s_go2next += evt == Buttons::RELEASE;
 		if (s_go2next)
@@ -407,7 +417,6 @@ extern "C" void app_main() {
 	ESP_ERROR_CHECK(esp_timer_create(&hbc, &s_heartBeatTimer));
 	ESP_ERROR_CHECK(esp_timer_start_periodic(s_heartBeatTimer, 100 * 1000ULL));
 
-	xSemaphoreTake(s_waitsem, pdMS_TO_TICKS(100));
 
 	UiEngine_init();
 	UiEngine_SetCycles(st.itm.cycles);
@@ -415,8 +424,15 @@ extern "C" void app_main() {
 	ESP_LOGI(TAG, "Uptime %ld. cycles %ld. next addr %ld", st.itm.uptime, st.itm.cycles, st.nextAddr);
 
 	ESP_LOGI(TAG, "do nothing for first 3 minutes");
+
+	xSemaphoreTake(s_waitsem, pdMS_TO_TICKS(100));
+
+	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_0, 0);
+	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_2, 0);
 	waiter(INITIAL_BLANK, st.itm.uptime);
 	ESP_LOGI(TAG, "Waiting is done");
+	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_0, 1);
+	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_2, 1);
 
 	const int64_t startAt = esp_timer_get_time();
 	const uint32_t worked4 = st.itm.uptime;
@@ -432,14 +448,16 @@ extern "C" void app_main() {
 		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_0, 0);
 
 		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_RLY_1, 1);
-		vTaskDelay(pdMS_TO_TICKS(RLY_HOLD_TIME));
+		vTaskDelay(pdMS_TO_TICKS(RLY_PURGE_TIME_1));
 		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_RLY_1, 0);
-		vTaskDelay(pdMS_TO_TICKS(RLY_HOLD_TIME));
+		vTaskDelay(pdMS_TO_TICKS(RLY_PURGE_TIME_1));
+
+		waiter(RLY_DLY_TIME, st.itm.uptime);
 
 		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_RLY_2, 1);
-		vTaskDelay(pdMS_TO_TICKS(RLY_HOLD_TIME));
+		vTaskDelay(pdMS_TO_TICKS(RLY_PURGE_TIME_2));
 		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_RLY_2, 0);
-		vTaskDelay(pdMS_TO_TICKS(RLY_HOLD_TIME));
+		vTaskDelay(pdMS_TO_TICKS(RLY_PURGE_TIME_2));
 
 		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_0, 1);
 

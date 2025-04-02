@@ -329,7 +329,7 @@ static void set_uptime(uint32_t sec) {
     if (!h)
     	lv_label_set_text_fmt(s_uiInternals.uptime, "%02dm %02ds", m, sc);
     else
-    	lv_label_set_text_fmt(s_uiInternals.uptime, "%6d", h);
+    	lv_label_set_text_fmt(s_uiInternals.uptime, "%3d:%02d", h, m);
 }
 
 int UiEngine_SetUptime(uint32_t sec) {
