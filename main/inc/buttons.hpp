@@ -30,8 +30,10 @@ private:
 
 public:
 	static Wrapper &instance() {
-		static Wrapper ins;
-		return ins;
+		static Wrapper *ins;
+		if (!ins)
+			ins = new Wrapper();
+		return *ins;
 	}
 
 	Button* add(int gpio_n, int btn, onButtonEvt_f cb, void *arg, bool invert = false);

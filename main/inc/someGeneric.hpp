@@ -24,13 +24,8 @@ bool UiEngine_lock(int timeout_ms);
 void UiEngine_unlock(void);
 
 
-int UiEngine_SetCycles(uint32_t cyc);
-int UiEngine_SetUptime(uint32_t cyc);
-int UiEngine_SetPercent(uint32_t prc, uint32_t sec);
-
-int UiEngine_SetVoltage(uint32_t mv);
-
-void UiEngine_forceredraw(void);
+int UiEngine_SetData(uint32_t cyc, uint32_t mv, uint32_t prc, uint32_t sec);
+int UiEngine_SetText(const char *text);
 
 int WiFi_init(void);
 

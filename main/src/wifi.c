@@ -41,6 +41,7 @@ typedef struct {
 static const WiFiCred_t s_creds[] = {
 //		{ "SiGaN-Guest", "Mission99" },
 //		{ "SiGaN-Guest", "sddd" },
+		{ "dummy", "mummy" }
 };
 
 static int getConnection(wifi_ap_record_t *ap) {

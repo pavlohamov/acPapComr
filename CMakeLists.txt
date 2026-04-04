@@ -76,4 +76,4 @@ endif()
 set(SDKCONFIG_DEFAULTS "${SDKCONFIG_DEFAULTS};${BOARDS_ROOT}/${BOARD}/sdkconfig")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(i2s_pdm_example VERSION ${PROJECT_VERSION})
+project(compressora VERSION ${PROJECT_VERSION})

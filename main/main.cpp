@@ -9,7 +9,6 @@
 
 #include "board_cfg.h"
 #include "someGeneric.hpp"
-#include "telnet.h"
 #include "storage.hpp"
 #include "buttons.hpp"
 
@@ -42,6 +41,8 @@ typedef int (*Initer_f)();
 #define INITIAL_BLANK (300)
 #define CYCLE_TIME (4000)
 #define RLY_PURGE_TIME_1 1000
+#define RLY_PURGE_TIME_2 RLY_PURGE_TIME_1
+#define RLY_DLY_TIME (1 * 1000)
 #else
 #define INITIAL_BLANK (3 * 60 * 1000)
 #define CYCLE_TIME (10 * 60 * 1000)
@@ -285,10 +286,8 @@ static const Initer_f s_inits[] = {
 	init_gpio,
 	init_i2c,
 	adc_init,
-//	LogUtil_init,
 //	UiEngine_init,
 //	WiFi_init,
-//	Telnet_init,
 	console_init,
 };
 
@@ -334,25 +333,27 @@ static void onButtonPress(int btn, int evt, void *arg) {
 	xSemaphoreGive(storage_lock);
 }
 
-static void waiter(uint32_t ms, const int64_t base) {
+static void waiter(uint32_t cyc, uint32_t ms, const int64_t base) {
 	const int64_t endAt = ms * 1000UL + esp_timer_get_time();
 	int prevPrc = -1;
 	while (!s_go2next && (endAt > esp_timer_get_time())) {
 		const uint32_t now = esp_timer_get_time() / 1000000UL + base;
 		const int64_t delta = (endAt - esp_timer_get_time()) / 1000UL;
-		const int wait4 = delta > 5000 ? 5000 : delta;
+		const int wait4 = delta > 100 ? 100 : delta;
 		const int prc = delta * 100 / ms;
 
 		if (prevPrc != prc) {
 			ESP_LOGD(TAG, "waiting %2d%% %dms", prc, wait4);
-			UiEngine_SetPercent(prc, now);
 			prevPrc = prc;
-			int voltage = 0;
-			ESP_ERROR_CHECK(adc_cali_raw_to_voltage(s_adc_caibration, s_battVoltage, &voltage));
-			voltage = voltage * 2 * BOARD_CFG_ADC_RATIO_MV + 50;
-			UiEngine_SetVoltage(voltage);
-			ESP_LOGD(TAG, "wa %d -> %d", s_battVoltage, voltage);
 		}
+		int voltage = 0;
+		ESP_ERROR_CHECK(adc_cali_raw_to_voltage(s_adc_caibration, s_battVoltage, &voltage));
+		voltage = voltage * 2 * BOARD_CFG_ADC_RATIO_MV + 50;
+		ESP_LOGD(TAG, "wa %d -> %d", s_battVoltage, voltage);
+		UiEngine_SetData(cyc, voltage, delta / 1000, now);
+
+//		UiEngine_SetPercent(prc, now);
+//		UiEngine_SetVoltage(voltage);
 
 		xSemaphoreTake(s_waitsem, pdMS_TO_TICKS(wait4));
 	}
@@ -419,27 +420,23 @@ extern "C" void app_main() {
 
 
 	UiEngine_init();
-	UiEngine_SetCycles(st.itm.cycles);
-	UiEngine_SetUptime(st.itm.uptime);
+	UiEngine_SetText("booting");
 	ESP_LOGI(TAG, "Uptime %ld. cycles %ld. next addr %ld", st.itm.uptime, st.itm.cycles, st.nextAddr);
-
 	ESP_LOGI(TAG, "do nothing for first 3 minutes");
-
-	xSemaphoreTake(s_waitsem, pdMS_TO_TICKS(100));
 
 	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_0, 0);
 	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_2, 0);
-	waiter(INITIAL_BLANK, st.itm.uptime);
+
+	char text[33];
+	snprintf(text, sizeof(text), "initial wait for %d sec", INITIAL_BLANK / 1000);
+	UiEngine_SetText(text);
+	waiter(st.itm.cycles, INITIAL_BLANK, st.itm.uptime);
 	ESP_LOGI(TAG, "Waiting is done");
 	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_0, 1);
 	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_2, 1);
 
 	const int64_t startAt = esp_timer_get_time();
 	const uint32_t worked4 = st.itm.uptime;
-
-	UiEngine_SetCycles(st.itm.cycles);
-	UiEngine_SetUptime(st.itm.uptime);
-	UiEngine_forceredraw();
 
 	while (1) {
 
@@ -448,15 +445,20 @@ extern "C" void app_main() {
 		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_0, 0);
 
 		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_RLY_1, 1);
+		UiEngine_SetText("RLY_1 ON RLY_2 OFF");
 		vTaskDelay(pdMS_TO_TICKS(RLY_PURGE_TIME_1));
 		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_RLY_1, 0);
+		UiEngine_SetText("RLY_1 OFF RLY_2 OFF");
 		vTaskDelay(pdMS_TO_TICKS(RLY_PURGE_TIME_1));
 
-		waiter(RLY_DLY_TIME, st.itm.uptime);
+		UiEngine_SetText("Delay between relays");
+		waiter(st.itm.cycles, RLY_DLY_TIME, st.itm.uptime);
 
 		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_RLY_2, 1);
+		UiEngine_SetText("RLY_1 OFF RLY_2 ON");
 		vTaskDelay(pdMS_TO_TICKS(RLY_PURGE_TIME_2));
 		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_RLY_2, 0);
+		UiEngine_SetText("RLY_1 OFF RLY_2 OFF");
 		vTaskDelay(pdMS_TO_TICKS(RLY_PURGE_TIME_2));
 
 		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_0, 1);
@@ -482,11 +484,9 @@ extern "C" void app_main() {
 		else
 			ESP_LOGI(TAG, "Saved %ld cycles. Worktime %ld", st.itm.cycles, st.itm.uptime);
 
-		UiEngine_SetCycles(st.itm.cycles);
-		UiEngine_SetUptime(st.itm.uptime);
-//		UiEngine_forceredraw();
-
-		waiter(CYCLE_TIME, st.itm.uptime);
+		snprintf(text, sizeof(text), "wait for %d sec", CYCLE_TIME / 1000);
+		UiEngine_SetText(text);
+		waiter(st.itm.cycles, CYCLE_TIME, st.itm.uptime);
 	}
 
 
