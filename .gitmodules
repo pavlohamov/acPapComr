@@ -1,0 +1,3 @@
+[submodule "esp_tools"]
+	path = esp_tools
+	url = git@github.com:pavlohamov/esp_tools.git

@@ -349,11 +349,8 @@ static void waiter(uint32_t cyc, uint32_t ms, const int64_t base) {
 		int voltage = 0;
 		ESP_ERROR_CHECK(adc_cali_raw_to_voltage(s_adc_caibration, s_battVoltage, &voltage));
 		voltage = voltage * 2 * BOARD_CFG_ADC_RATIO_MV + 50;
-		ESP_LOGD(TAG, "wa %d -> %d", s_battVoltage, voltage);
+//		ESP_LOGD(TAG, "wa %d -> %d", s_battVoltage, voltage);
 		UiEngine_SetData(cyc, voltage, delta / 1000, now);
-
-//		UiEngine_SetPercent(prc, now);
-//		UiEngine_SetVoltage(voltage);
 
 		xSemaphoreTake(s_waitsem, pdMS_TO_TICKS(wait4));
 	}
@@ -391,7 +388,7 @@ extern "C" void app_main() {
 	xSemaphoreTake(storage_lock, portMAX_DELAY);
 	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_FORCE_PWR, 1);
 	Storage_t st;
-	Storage_init(s_i2cDev, &st);
+	int srv = Storage_init(s_i2cDev, &st);
 	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_FORCE_PWR, 0);
 	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_1, 1);
 	xSemaphoreGive(storage_lock);
@@ -424,6 +421,14 @@ extern "C" void app_main() {
 	ESP_LOGI(TAG, "Uptime %ld. cycles %ld. next addr %ld", st.itm.uptime, st.itm.cycles, st.nextAddr);
 	ESP_LOGI(TAG, "do nothing for first 3 minutes");
 
+	if (srv) {
+		char text[64];
+		snprintf(text, sizeof(text), "stor init %d", srv);
+		UiEngine_SetText(text);
+		while (1)
+			vTaskDelay(pdMS_TO_TICKS(100));
+	}
+
 	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_0, 0);
 	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_2, 0);
 
@@ -435,7 +440,7 @@ extern "C" void app_main() {
 	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_0, 1);
 	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_2, 1);
 
-	const int64_t startAt = esp_timer_get_time();
+	const uint32_t startAt = esp_timer_get_time() / 1000ULL;
 	const uint32_t worked4 = st.itm.uptime;
 
 	while (1) {
@@ -466,7 +471,7 @@ extern "C" void app_main() {
 		ESP_LOGI(TAG, "Cycle done. Saving");
 
 		st.itm.cycles += 1;
-		st.itm.uptime = worked4 + (esp_timer_get_time() - startAt) / 1000000ULL;
+		st.itm.uptime = worked4 + (esp_timer_get_time() / 1000ULL - startAt) / 1000ULL;
 
 		if (gpio_get_level((gpio_num_t)BOARD_CFG_GPIO_NPGOOD)) {
 			ESP_LOGE(TAG, "Power loss");
@@ -479,12 +484,15 @@ extern "C" void app_main() {
 		int rv = Storage_save(s_i2cDev, &st);
 		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_FORCE_PWR, 0);
 		xSemaphoreGive(storage_lock);
-		if (rv)
+		if (rv) {
 			ESP_LOGE(TAG, "Save failure -%X", rv);
-		else
+			snprintf(text, sizeof(text), "Save failure -%X", rv);
+		}
+		else {
 			ESP_LOGI(TAG, "Saved %ld cycles. Worktime %ld", st.itm.cycles, st.itm.uptime);
+			snprintf(text, sizeof(text), "wait for %d sec", CYCLE_TIME / 1000);
+		}
 
-		snprintf(text, sizeof(text), "wait for %d sec", CYCLE_TIME / 1000);
 		UiEngine_SetText(text);
 		waiter(st.itm.cycles, CYCLE_TIME, st.itm.uptime);
 	}

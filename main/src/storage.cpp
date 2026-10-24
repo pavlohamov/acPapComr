@@ -42,6 +42,7 @@ int Storage_init(i2c_master_dev_handle_t dev, Storage_t *p) {
 	}
 
 	memset(p, 0, sizeof(*p));
+#if 0
 
 	char hdr[sizeof(s_magic)];
 
@@ -95,9 +96,22 @@ int Storage_init(i2c_master_dev_handle_t dev, Storage_t *p) {
 		}
 		free(ptr);
 	}
+#else
+	uint16_t addr = 0;
+	int rv = i2c_master_transmit_receive(dev, (uint8_t*)&addr, sizeof(addr), (uint8_t*)p, sizeof(*p), 1500);
+	if (p->itm.cycles == 0xFFFFFFFF)
+		rv = 1;
+	else if (crc8_le(0, (uint8_t*)&p->itm, sizeof(p->itm) - sizeof(p->itm.crc)) != p->itm.crc)
+		rv = -1;
+#endif
+	if (rv) {
+		memset(p, 0, sizeof(*p));
+		rv = Storage_wipe(dev);
+	}
 	ESP_LOGI(TAG, "Uptime %ld. cycles %ld. next addr %ld", p->itm.uptime, p->itm.cycles, p->nextAddr);
 
-	return 0;
+
+	return rv;
 }
 
 int Storage_wipe(i2c_master_dev_handle_t dev) {
@@ -129,10 +143,10 @@ int Storage_wipe(i2c_master_dev_handle_t dev) {
 }
 
 int Storage_save(i2c_master_dev_handle_t dev, Storage_t *p) {
-
 	p->nextAddr += sizeof(p->itm);
 
 	p->itm.crc = crc8_le(0, (uint8_t*)&p->itm, sizeof(p->itm) - sizeof(p->itm.crc));
+#if 0
 
 	static const uint32_t maxAddr = NVRAM_SIZE - NVRAM_SIZE % sizeof(SavedItem_t) - sizeof(s_magic);
 	if (p->nextAddr >= maxAddr) // round address
@@ -165,9 +179,17 @@ int Storage_save(i2c_master_dev_handle_t dev, Storage_t *p) {
 		memcpy(data, pitm + write, nextWrite);
 		rv = i2c_master_transmit(dev, ptr, nextWrite + 2, 50);
 	}
-	vTaskDelay(pdMS_TO_TICKS(6));
 
 	free(ptr);
+#else
+	uint8_t buff[2 + sizeof(Storage_t)] = {};
+	memset(buff + 2, 0xff, sizeof(buff) - 2);
+	i2c_master_transmit(dev, buff, sizeof(buff), 150);
+	vTaskDelay(pdMS_TO_TICKS(6));
+	memcpy(buff + 2, p, sizeof(Storage_t));
+	int rv = i2c_master_transmit(dev, buff, sizeof(buff), 150);
+#endif
+	vTaskDelay(pdMS_TO_TICKS(6));
 
 	if (rv) {
 		ESP_LOGE(TAG, "i2c write failure %X", rv);

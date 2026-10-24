@@ -71,28 +71,11 @@ static void lvgl_routine(void *arg) {
     ESP_LOGI(TAG, "Started LVGL task");
 
 	uint32_t wait4 = 50;
-
-	int64_t last = esp_timer_get_time() / 1000UL;
-
-	int rota = 0;
-
-    esp_lcd_panel_handle_t panel_handle = lv_display_get_user_data(s_uiInternals.disp);
 	while (1) {
 		if (wait4 > 50)
 			wait4 = 50;
 		xSemaphoreTake(s_uiInternals.waiter, pdMS_TO_TICKS(wait4));
 
-		const int64_t now = esp_timer_get_time() / 1000UL;
-		if (now - last > 25) {
-			last = now;
-//			lv_display_set_rotation(s_uiInternals.disp, (lv_display_rotation_t)rota);
-		    ESP_LOGI(TAG, "rota %d", rota);
-			if (++rota > LV_DISPLAY_ROTATION_270)
-				rota = 0;
-
-			if (++rota > 284)
-				rota = 0;
-		}
 		if (UiEngine_lock(-1)) {
 			wait4 = lv_timer_handler();
 			UiEngine_unlock();
@@ -283,7 +266,7 @@ int UiEngine_SetData(uint32_t cyc, uint32_t mv, uint32_t prc, uint32_t sec) {
 	const int m = (sec / 60) % 60;
 	const int h = sec / 3600;
 
-	lv_label_set_text_fmt(s_uiInternals.cycles, "Cycles %6ld.  BAT %2ld.%02ldV %02lds", cyc, mv / 100, mv % 100, prc);
+	lv_label_set_text_fmt(s_uiInternals.cycles, "Cycles %6ld.  BAT %2ld.%02ldV %02lds", cyc, mv / 1000, (mv / 10) % 100, prc);
 	if (!h)
 		lv_label_set_text_fmt(s_uiInternals.uptime, "MotoMinutes %2d:%2d", m, sc);
 	else
