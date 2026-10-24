@@ -283,6 +283,7 @@ int UiEngine_SetText(const char *text) {
 	}
 	lv_label_set_text_fmt(s_uiInternals.percent, "%s", text);
 	UiEngine_unlock();
+    ESP_LOGI(TAG, "UI: '%s'", text);
 	return 0;
 }
 

@@ -9,8 +9,8 @@
 
 #include "board_cfg.h"
 #include "someGeneric.hpp"
-#include "storage.hpp"
-#include "buttons.hpp"
+#include "NvStorage.hpp"
+#include "Buttons.hpp"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -115,7 +115,7 @@ static int init_i2c() {
 		.intr_priority = 0,
 		.trans_queue_depth = 0,
 		.flags = {
-			.enable_internal_pullup = 0,
+			.enable_internal_pullup = 1,
 			.allow_pd = 0,
 		},
 	};
@@ -304,35 +304,6 @@ static void onHbTout(void* arg) {
 	esp_timer_start_periodic(s_heartBeatTimer, lvl ? 600 * 1000ULL : 100 * 1000ULL);
 }
 
-static void onButtonPress(int btn, int evt, void *arg) {
-	SemaphoreHandle_t storage_lock = (SemaphoreHandle_t)arg;
-
-	Buttons::Wrapper &buttonHolder = Buttons::Wrapper::instance();
-	ESP_LOGE(TAG, "btn %d stt %d %d %d", btn, evt, gpio_get_level(GPIO_NUM_21), buttonHolder.pressedFor(btn));
-
-	if (evt == Buttons::RELEASE) {
-		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_RLY_1, 0);
-		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_RLY_2, 0);
-	} else {
-		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_RLY_1, 1);
-		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_RLY_2, 1);
-	}
-
-	if (buttonHolder.pressedFor(btn) < 10 * 1000) {
-		s_go2next += evt == Buttons::RELEASE;
-		if (s_go2next)
-			xSemaphoreGive(s_waitsem);
-		return;
-	}
-	ESP_LOGI(TAG, "WIPING");
-	xSemaphoreTake(storage_lock, portMAX_DELAY);
-	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_FORCE_PWR, 1);
-	Storage_wipe(s_i2cDev);
-	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_FORCE_PWR, 0);
-	esp_restart();
-	xSemaphoreGive(storage_lock);
-}
-
 static void waiter(uint32_t cyc, uint32_t ms, const int64_t base) {
 	const int64_t endAt = ms * 1000UL + esp_timer_get_time();
 	int prevPrc = -1;
@@ -357,6 +328,9 @@ static void waiter(uint32_t cyc, uint32_t ms, const int64_t base) {
 	s_go2next = 0;
 }
 
+#define PAGE_SIZE 32
+#define SWAP_16(x) (((x << 8) & 0xFF00) | ((x >> 8) & 0xFF))
+
 extern "C" void app_main() {
 
 	esp_log_level_set(TAG, ESP_LOG_VERBOSE);
@@ -369,7 +343,6 @@ extern "C" void app_main() {
 			esp_restart();
 			return;
 		} else {
-
 			ESP_LOGI(TAG, "%d %p ok", i, s_inits[i]);
 		}
 	}
@@ -381,17 +354,118 @@ extern "C" void app_main() {
 
 	gpio_install_isr_service(0);
 
+	typedef struct {
+		uint32_t cycles;
+		uint32_t uptime;
+	} OdoSave_t;
+
+	// s_i2cDev
+	struct FlashPart {
+		bool read(off_t off, void* data, size_t size) {
+			gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_FORCE_PWR, 1);
+			uint16_t addr = SWAP_16(off);
+			int rv = i2c_master_transmit_receive(s_i2cDev, (uint8_t*)&addr, sizeof(addr), (uint8_t*)data, size, 150);
+			gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_FORCE_PWR, 0);
+			if (rv) {
+				ESP_LOGE(TAG, "read @%X fail %d", off, rv);
+				return false;
+			}
+			// ESP_LOGV(TAG, "read @%X ok", off);
+			return true;
+		}
+		bool write(off_t off, const void* data, size_t size) {
+			const uint8_t* ptr = static_cast<const uint8_t*>(data);
+			gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_FORCE_PWR, 1);
+
+			size_t done = 0;
+			int rv = 0;
+			while (done < size) {
+				off_t dst = off + done;
+				size_t to_write = PAGE_SIZE - (dst % PAGE_SIZE);
+				to_write = std::min(to_write, size - done);
+
+				uint16_t addr = SWAP_16(dst);
+				i2c_master_transmit_multi_buffer_info_t bu[] = {
+					{ .write_buffer = (uint8_t*)&addr, .buffer_size = sizeof(addr) },
+					{ .write_buffer = ptr + done, .buffer_size = to_write },
+				};
+				rv = i2c_master_multi_buffer_transmit(s_i2cDev, bu, 2, 150);
+				if (rv) {
+					ESP_LOGE(TAG, "write @%X fail %d %zu of %zu", dst, rv, done, size);
+					break;
+				}
+				done += to_write;
+				if (done < size) {
+					vTaskDelay(pdMS_TO_TICKS(6));
+				}
+			}
+			if (rv) {
+				ESP_LOGE(TAG, "write @%X fail %d", off, rv);
+				return false;
+			}
+			// ESP_LOGV(TAG, "write @%X ok", off);
+
+			gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_FORCE_PWR, 0);
+			return true;
+		}
+		bool erase(size_t size) {
+			ESP_LOGI(TAG, "erase @%X", size);
+			gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_FORCE_PWR, 1);
+			static const uint8_t buff[32] = {};
+			for (size_t i = 0; i < 2048; i += sizeof(buff)) {
+				uint16_t addr = SWAP_16(i);
+				i2c_master_transmit_multi_buffer_info_t bu[] = {
+					{ .write_buffer = (uint8_t*)&addr, .buffer_size = sizeof(addr) },
+					{ .write_buffer = buff, .buffer_size = sizeof(buff) },
+				};
+
+				int rv = i2c_master_multi_buffer_transmit(s_i2cDev, bu, 2, 150);
+				if (rv) {
+					ESP_LOGE(TAG, "write @%X fail %d %zu of %zu", addr, rv, i, size);
+					break;
+				}
+				vTaskDelay(pdMS_TO_TICKS(6));
+			}
+			gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_FORCE_PWR, 0);
+			return true;
+		}
+	} fp;
+	NvStorage<OdoSave_t, 2048, FlashPart> stor{fp};
+
+
+	auto onButtonPress = [&storage_lock, &fp, &stor](int btn, int evt, void *arg) {
+
+		Buttons::Wrapper &buttonHolder = Buttons::Wrapper::instance();
+		if (evt != Buttons::RELEASE) // todo: fix call from isr
+			ESP_LOGE(TAG, "btn %d stt %d %d %d", btn, evt, gpio_get_level(GPIO_NUM_21), buttonHolder.pressed_for(btn));
+
+		if (evt == Buttons::RELEASE) {
+			gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_RLY_1, 0);
+			gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_RLY_2, 0);
+		} else {
+			gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_RLY_1, 1);
+			gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_RLY_2, 1);
+		}
+
+		if (buttonHolder.pressed_for(btn) < 10 * 1000) {
+			s_go2next += evt == Buttons::RELEASE;
+			if (s_go2next)
+				xSemaphoreGive(s_waitsem);
+			return;
+		}
+		ESP_LOGI(TAG, "WIPING");
+		xSemaphoreTake(storage_lock, portMAX_DELAY);
+		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_FORCE_PWR, 1);
+		fp.erase(2048);
+		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_FORCE_PWR, 0);
+		esp_restart();
+		xSemaphoreGive(storage_lock);
+	};
+
 	Buttons::Wrapper &buttonHolder = Buttons::Wrapper::instance();
-	buttonHolder.add(BOARD_CFG_GPIO_USER_BTN, 0, onButtonPress, storage_lock);
+	buttonHolder.add(BOARD_CFG_GPIO_USER_BTN, 0, 0, onButtonPress, nullptr);
 
-
-	xSemaphoreTake(storage_lock, portMAX_DELAY);
-	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_FORCE_PWR, 1);
-	Storage_t st;
-	int srv = Storage_init(s_i2cDev, &st);
-	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_FORCE_PWR, 0);
 	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_1, 1);
-	xSemaphoreGive(storage_lock);
 
 	static const esp_timer_create_args_t hbc = {
 		.callback = onHbTout,
@@ -415,19 +489,13 @@ extern "C" void app_main() {
 	ESP_ERROR_CHECK(esp_timer_create(&hbc, &s_heartBeatTimer));
 	ESP_ERROR_CHECK(esp_timer_start_periodic(s_heartBeatTimer, 100 * 1000ULL));
 
+	OdoSave_t motorhours = {};
+	stor.find(motorhours);
 
 	UiEngine_init();
 	UiEngine_SetText("booting");
-	ESP_LOGI(TAG, "Uptime %ld. cycles %ld. next addr %ld", st.itm.uptime, st.itm.cycles, st.nextAddr);
+	ESP_LOGW(TAG, "Uptime %ld. cycles %ld", motorhours.uptime, motorhours.cycles);
 	ESP_LOGI(TAG, "do nothing for first 3 minutes");
-
-	if (srv) {
-		char text[64];
-		snprintf(text, sizeof(text), "stor init %d", srv);
-		UiEngine_SetText(text);
-		while (1)
-			vTaskDelay(pdMS_TO_TICKS(100));
-	}
 
 	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_0, 0);
 	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_2, 0);
@@ -435,13 +503,13 @@ extern "C" void app_main() {
 	char text[33];
 	snprintf(text, sizeof(text), "initial wait for %d sec", INITIAL_BLANK / 1000);
 	UiEngine_SetText(text);
-	waiter(st.itm.cycles, INITIAL_BLANK, st.itm.uptime);
+	waiter(motorhours.cycles, INITIAL_BLANK, motorhours.uptime);
 	ESP_LOGI(TAG, "Waiting is done");
 	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_0, 1);
 	gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_LED_2, 1);
 
 	const uint32_t startAt = esp_timer_get_time() / 1000ULL;
-	const uint32_t worked4 = st.itm.uptime;
+	const uint32_t worked4 = motorhours.uptime;
 
 	while (1) {
 
@@ -457,7 +525,7 @@ extern "C" void app_main() {
 		vTaskDelay(pdMS_TO_TICKS(RLY_PURGE_TIME_1));
 
 		UiEngine_SetText("Delay between relays");
-		waiter(st.itm.cycles, RLY_DLY_TIME, st.itm.uptime);
+		waiter(motorhours.cycles, RLY_DLY_TIME, motorhours.uptime);
 
 		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_RLY_2, 1);
 		UiEngine_SetText("RLY_1 OFF RLY_2 ON");
@@ -470,8 +538,8 @@ extern "C" void app_main() {
 
 		ESP_LOGI(TAG, "Cycle done. Saving");
 
-		st.itm.cycles += 1;
-		st.itm.uptime = worked4 + (esp_timer_get_time() / 1000ULL - startAt) / 1000ULL;
+		motorhours.cycles += 1;
+		motorhours.uptime = worked4 + (esp_timer_get_time() / 1000ULL - startAt) / 1000ULL;
 
 		if (gpio_get_level((gpio_num_t)BOARD_CFG_GPIO_NPGOOD)) {
 			ESP_LOGE(TAG, "Power loss");
@@ -480,21 +548,18 @@ extern "C" void app_main() {
 		}
 
 		xSemaphoreTake(storage_lock, portMAX_DELAY);
-		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_FORCE_PWR, 1);
-		int rv = Storage_save(s_i2cDev, &st);
-		gpio_set_level((gpio_num_t)BOARD_CFG_GPIO_FORCE_PWR, 0);
+		bool ok = stor.set(motorhours);
 		xSemaphoreGive(storage_lock);
-		if (rv) {
-			ESP_LOGE(TAG, "Save failure -%X", rv);
-			snprintf(text, sizeof(text), "Save failure -%X", rv);
-		}
-		else {
-			ESP_LOGI(TAG, "Saved %ld cycles. Worktime %ld", st.itm.cycles, st.itm.uptime);
+		if (ok) {
+			ESP_LOGI(TAG, "Saved %ld cycles. Worktime %ld", motorhours.cycles, motorhours.uptime);
 			snprintf(text, sizeof(text), "wait for %d sec", CYCLE_TIME / 1000);
+		} else {
+			ESP_LOGE(TAG, "Save failure");
+			snprintf(text, sizeof(text), "Save failure");
 		}
 
 		UiEngine_SetText(text);
-		waiter(st.itm.cycles, CYCLE_TIME, st.itm.uptime);
+		waiter(motorhours.cycles, CYCLE_TIME, motorhours.uptime);
 	}
 
 
