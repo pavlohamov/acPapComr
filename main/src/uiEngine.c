@@ -54,6 +54,7 @@ static struct {
 	SemaphoreHandle_t waiter;
 	TaskHandle_t tid;
 
+	esp_lcd_panel_handle_t panel_handle;
 	lv_display_t *disp;
 
 	lv_obj_t *cycles;
@@ -67,16 +68,39 @@ static void on_lvgl_tick(void *arg) {
     lv_tick_inc(LVGL_TICK_PERIOD_MS);
 }
 
+static void cfg_lcd_panel(esp_lcd_panel_handle_t panel_handle) {
+	ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
+	ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
+	ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
+
+	ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(panel_handle, 1));
+	ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel_handle, 0, 1));
+	ESP_ERROR_CHECK(esp_lcd_panel_set_gap(panel_handle, 18, 82));
+	ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel_handle, 0));
+//
+//	ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(panel_handle, 0));
+//	ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel_handle, 1, 1));
+//	esp_lcd_panel_set_gap(panel_handle, 18, 82);
+}
+
 static void lvgl_routine(void *arg) {
     ESP_LOGI(TAG, "Started LVGL task");
 
 	uint32_t wait4 = 50;
+
+	uint32_t startAt = esp_timer_get_time() / 1'000'000ULL;
 	while (1) {
+		const uint64_t now_s = esp_timer_get_time() / 1'000'000ULL;
 		if (wait4 > 50)
 			wait4 = 50;
 		xSemaphoreTake(s_uiInternals.waiter, pdMS_TO_TICKS(wait4));
 
 		if (UiEngine_lock(-1)) {
+			if (now_s - startAt > 10) {
+			    ESP_LOGI(TAG, "reinit panel");
+				cfg_lcd_panel(s_uiInternals.panel_handle);
+				startAt = now_s;
+			}
 			wait4 = lv_timer_handler();
 			UiEngine_unlock();
 		}
@@ -132,19 +156,7 @@ static esp_lcd_panel_handle_t init_lcd_panel(esp_lcd_panel_io_handle_t io_handle
 
 	esp_lcd_panel_handle_t panel_handle = NULL;
 	ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle));
-	ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
-	ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
-	ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
-
-	ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(panel_handle, 1));
-	ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel_handle, 0, 1));
-	ESP_ERROR_CHECK(esp_lcd_panel_set_gap(panel_handle, 18, 82));
-	ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel_handle, 0));
-//
-//	ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(panel_handle, 0));
-//	ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel_handle, 1, 1));
-//	esp_lcd_panel_set_gap(panel_handle, 18, 82);
-
+	cfg_lcd_panel(panel_handle);
 
 //static uint16_t line[BOARD_CFG_DISPLAY_WIDTH];
 //
@@ -162,7 +174,6 @@ static esp_lcd_panel_handle_t init_lcd_panel(esp_lcd_panel_io_handle_t io_handle
 //			vTaskDelay(pdMS_TO_TICKS(10));
 //		}
 //	}
-
 
 	return panel_handle;
 }
@@ -271,6 +282,7 @@ int UiEngine_SetData(uint32_t cyc, uint32_t mv, uint32_t prc, uint32_t sec) {
 		lv_label_set_text_fmt(s_uiInternals.uptime, "MotoMinutes %2d:%2d", m, sc);
 	else
 		lv_label_set_text_fmt(s_uiInternals.uptime, "MotoHrs: %d (min %2d:%2d)", h, m, sc);
+
 	UiEngine_unlock();
 	return 0;
 }
@@ -304,11 +316,11 @@ int UiEngine_init(void) {
 	s_uiInternals.waiter = xSemaphoreCreateBinary();
 
     esp_lcd_panel_io_handle_t io_handle = init_lcd_bus();
-    esp_lcd_panel_handle_t panel_handle = init_lcd_panel(io_handle);
+    s_uiInternals.panel_handle = init_lcd_panel(io_handle);
 
-    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
+    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_uiInternals.panel_handle, true));
 
-    s_uiInternals.disp = init_lvgl(panel_handle);
+    s_uiInternals.disp = init_lvgl(s_uiInternals.panel_handle);
 	if (!s_uiInternals.disp) {
 		ESP_LOGE(TAG, "Failed to init lvgl");
 		return -1;
@@ -336,7 +348,7 @@ int UiEngine_init(void) {
 	lv_obj_align_to(s_uiInternals.percent, s_uiInternals.uptime, LV_ALIGN_OUT_BOTTOM_MID, 0, 3);
 
     ESP_LOGI(TAG, "Create LVGL task");
-    xTaskCreate(lvgl_routine, "LVGL", 4 * 1024, NULL, 2, &s_uiInternals.tid);
+    xTaskCreate(lvgl_routine, "LVGL", 5 * 1024, NULL, 2, &s_uiInternals.tid);
     return 0;
 }
 #endif

@@ -18,6 +18,7 @@ target_include_directories(${COMPONENT_LIB} PRIVATE
 
 	${CMAKE_CURRENT_SOURCE_DIR}/inc
 	${CMAKE_CURRENT_SOURCE_DIR}/../esp_tools/
+	${CMAKE_CURRENT_SOURCE_DIR}/../esp_tools/sm
 )
 
 target_sources(${COMPONENT_LIB} PRIVATE
@@ -25,4 +26,6 @@ target_sources(${COMPONENT_LIB} PRIVATE
 	${USRC}
 
 	${CMAKE_CURRENT_SOURCE_DIR}/../esp_tools/impl/Buttons.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../esp_tools/impl/RunnableFreeRtos.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../esp_tools/sm/FSM.cpp
 )

@@ -1,0 +1,55 @@
+/*
+ * board_cfg.h
+ *
+ *  Created on: Jan 12, 2024
+ *      Author: pavlo.hamov@sigan.tech
+ */
+
+#pragma once
+
+#define BOARD_CFG_ID "esp32s2 rc1"
+#define BOARD_CFG_REVISION 0
+
+#define BOARD_CFG_GPIO_ADC_VIN ADC_CHANNEL_3 // gpio 4
+
+#define BOARD_CFG_ADC_RH 47000
+#define BOARD_CFG_ADC_RL  2200
+
+#define BOARD_CFG_ADC_RATIO_MV ((BOARD_CFG_ADC_RH + BOARD_CFG_ADC_RL) / BOARD_CFG_ADC_RL)
+
+#define BOARD_CFG_DISPLAY
+
+#if 01
+#define BOARD_CFG_DISPLAY_WIDTH 284
+#define BOARD_CFG_DISPLAY_HEIGHT 76
+#else
+#define BOARD_CFG_DISPLAY_WIDTH 76
+#define BOARD_CFG_DISPLAY_HEIGHT 284
+#endif
+
+#define BOARD_CFG_GPIO_BROWNOUT 48
+
+#define BOARD_CFG_GPIO_LCD_BUSY  40
+#define BOARD_CFG_GPIO_LCD_RST   39
+#define BOARD_CFG_GPIO_LCD_MOSI  45
+#define BOARD_CFG_GPIO_LCD_CLK   42
+#define BOARD_CFG_GPIO_LCD_DC    41
+#define BOARD_CFG_GPIO_LCD_CS    38
+
+#define BOARD_CFG_GPIO_RLY_1_H 11
+#define BOARD_CFG_GPIO_RLY_1_L 10
+#define BOARD_CFG_GPIO_RLY_2_H 9
+#define BOARD_CFG_GPIO_RLY_2_L 46
+
+#define BOARD_CFG_I2C_BUS I2C_NUM_0
+#define BOARD_CFG_GPIO_SCL ((gpio_num_t)2)
+#define BOARD_CFG_GPIO_SDA ((gpio_num_t)3)
+#define BOARD_CFG_FRAM_ADDR 0x50
+
+#define BOARD_CFG_GPIO_LED_0 15
+#define BOARD_CFG_GPIO_LED_1 16
+#define BOARD_CFG_GPIO_LED_2 17
+#define BOARD_CFG_GPIO_LED_3 18
+
+
+#define BOARD_CFG_GPIO_USER_BTN 12
