@@ -23,8 +23,6 @@ static const char *TAG = "UiEngine";
 #ifndef BOARD_CFG_DISPLAY
 
 int UiEngine_init(void) { return 0; }
-bool UiEngine_lock(int timeout_ms) { return true; }
-void UiEngine_unlock(void) {}
 int UiEngine_SetData(uint32_t cyc, uint32_t mv, uint32_t prc, uint32_t sec) { return 0; }
 int UiEngine_SetText(const char *text) { ESP_LOGI(TAG, "UI: '%s'", text); return 0; }
 
@@ -108,7 +106,7 @@ private:
 	bool text_dirty_ = false;
 };
 
-CompressorUI *s_ui;
+static CompressorUI *s_ui = nullptr;
 
 TftUI::Config board_config() {
 	TftUI::Config cfg;
@@ -139,45 +137,17 @@ TftUI::Config board_config() {
 
 } // namespace
 
-bool UiEngine_lock(int timeout_ms) {
-	if (!s_ui)
-		return false;
-	if (timeout_ms < 0) {
-		s_ui->lock();
-		return true;
-	}
-	const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeout_ms);
-	while (!s_ui->try_lock()) {
-		if (int32_t(xTaskGetTickCount() - deadline) >= 0)
-			return false;
-		vTaskDelay(1);
-	}
-	return true;
-}
-
-void UiEngine_unlock(void) {
-	if (s_ui)
-		s_ui->unlock();
-}
-
 int UiEngine_SetData(uint32_t cyc, uint32_t mv, uint32_t prc, uint32_t sec) {
-	if (!UiEngine_lock(200)) {
-		ESP_LOGE(TAG, "UI locked");
-		return 0;
+	if (s_ui) {
+		s_ui->setData(cyc, mv, prc, sec);
 	}
-	s_ui->setData(cyc, mv, prc, sec);
-	UiEngine_unlock();
 	return 0;
 }
 
 int UiEngine_SetText(const char *text) {
-	if (!UiEngine_lock(200)) {
-		ESP_LOGE(TAG, "UI locked");
-		return 0;
+	if (s_ui) {
+		s_ui->setText(text);
 	}
-	s_ui->setText(text);
-	UiEngine_unlock();
-	ESP_LOGI(TAG, "UI: '%s'", text);
 	return 0;
 }
 

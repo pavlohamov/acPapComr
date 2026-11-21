@@ -72,8 +72,11 @@ static int init_gpio(void) {
 
 static inline void setRly(int rly, bool state) {
 	static const int lut[] = {
+#if 01
 			BOARD_CFG_GPIO_RLY_1_L, BOARD_CFG_GPIO_RLY_2_L,
-//			BOARD_CFG_GPIO_RLY_1_H, BOARD_CFG_GPIO_RLY_2_H,
+#else
+			BOARD_CFG_GPIO_RLY_1_H, BOARD_CFG_GPIO_RLY_2_H,
+#endif
 	};
 	if (rly > 1)
 		return;
@@ -275,6 +278,55 @@ void* Relayer::onSecond(SM::FSM *const fsm, const SM::FSM_Event *event) {
 			break;
 	}
 	return state;
+}
+
+
+std::string Relayer::info() const {
+	if (isInState(initialWait)) {
+		const uint64_t elapsed_ms = esp_timer_get_time() / 1'000UL - last_ms_;
+		const uint32_t left = INITIAL_BLANK - elapsed_ms;
+
+		char text[129];
+		snprintf(text, sizeof(text), "init wait %lu/%u sec", left / 1000, INITIAL_BLANK / 1000);
+		return text;
+	}
+
+	if (isInState(waitTill)) {
+		const uint64_t elapsed_ms = esp_timer_get_time() / 1'000UL - last_ms_;
+		const uint32_t left = CYCLE_TIME - elapsed_ms;
+
+		char text[129];
+		snprintf(text, sizeof(text), "     wait %lu/%u sec", left / 1000, CYCLE_TIME / 1000);
+	}
+
+	if (isInState(onFirst)) {
+		const uint64_t elapsed_ms = esp_timer_get_time() / 1'000UL - last_ms_;
+		const uint32_t left = RLY_PURGE_TIME_1 - elapsed_ms;
+
+		char text[129];
+		snprintf(text, sizeof(text), "   ON OFF %lu/%u ms", left, RLY_PURGE_TIME_1);
+		return "";
+	}
+
+	if (isInState(waitup)) {
+		const uint64_t elapsed_ms = esp_timer_get_time() / 1'000UL - last_ms_;
+		const uint32_t left = RLY_PURGE_TIME_1 - elapsed_ms;
+
+		char text[129];
+		snprintf(text, sizeof(text), "  OFF OFF %lu/%u ms", left, RLY_DLY_TIME);
+		return "";
+	}
+
+	if (isInState(onSecond)) {
+		const uint64_t elapsed_ms = esp_timer_get_time() / 1'000UL - last_ms_;
+		const uint32_t left = RLY_PURGE_TIME_1 - elapsed_ms;
+
+		char text[129];
+		snprintf(text, sizeof(text), "  OFF  ON %lu/%u ms", left, RLY_PURGE_TIME_1);
+		return "";
+	}
+
+	return "wtf?!";
 }
 
 void Relayer::run() {

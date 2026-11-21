@@ -444,16 +444,16 @@ extern "C" void app_main() {
 	uint64_t saveAt_ms = startAt;
 	while (1) {
 		const uint64_t now_ms = esp_timer_get_time() / 1000ULL;
-		uint32_t sig;
-		if (!xQueueReceive(queue, &sig, pdMS_TO_TICKS(100))) {
+		const uint32_t currUptime = (now_ms - startAt) / 1000ULL + worked4;
+		uint32_t sig = -1;
+		if (!xQueueReceive(queue, &sig, pdMS_TO_TICKS(25))) {
 			int voltage = 0;
 			ESP_ERROR_CHECK(adc_cali_raw_to_voltage(s_adc_caibration, s_battVoltage, &voltage));
 			voltage = voltage * BOARD_CFG_ADC_RATIO_MV;
-			UiEngine_SetData(motorhours.cycles, voltage, 0, motorhours.uptime);
-//			UiEngine_SetText
-			if (now_ms - saveAt_ms < SAVE_PERIOD_MS)
-				continue;
-			sig = EVT_Save2storage;
+			UiEngine_SetData(motorhours.cycles, voltage + 280, 0, currUptime);
+			UiEngine_SetText(relayer.info().c_str());
+			if (now_ms - saveAt_ms > SAVE_PERIOD_MS)
+				sig = EVT_Save2storage;
 		}
 
 		switch (sig) {
@@ -462,8 +462,8 @@ extern "C" void app_main() {
 				break;
 			case EVT_Save2storage: {
 				motorhours.cycles = clycled4 + relayer.cycles();
-				motorhours.uptime = (now_ms - startAt) / 1000ULL + worked4;
-				ESP_LOGW(TAG, "saving Uptime %ld. cycles %ld %5 adc", motorhours.uptime, motorhours.cycles, s_battVoltage);
+				motorhours.uptime = currUptime;
+				ESP_LOGW(TAG, "saving Uptime %ld. cycles %ld %5d adc", motorhours.uptime, motorhours.cycles, s_battVoltage);
 				const uint32_t saveStart = esp_timer_get_time() / 1000ULL;
 				if (stor.set(motorhours)) {
 					const uint32_t saved = esp_timer_get_time() / 1000ULL - saveStart;

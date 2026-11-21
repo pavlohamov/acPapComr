@@ -9,6 +9,7 @@
 #define MAIN_SRC_RELAYER_HPP_
 
 #include <cstdint>
+#include <string>
 
 #include "sm/FSM.hpp"
 #include "Runnable.hpp"
@@ -52,6 +53,8 @@ public:
     		static void* onFirst(SM::FSM *const fsm, const SM::FSM_Event *event);
     		static void* waitup(SM::FSM *const fsm, const SM::FSM_Event *event);
     		static void* onSecond(SM::FSM *const fsm, const SM::FSM_Event *event);
+
+	std::string info() const;
 
 protected:
     virtual void run() noexcept;
