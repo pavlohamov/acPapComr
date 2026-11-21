@@ -27,5 +27,7 @@ target_sources(${COMPONENT_LIB} PRIVATE
 
 	${CMAKE_CURRENT_SOURCE_DIR}/../esp_tools/impl/Buttons.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../esp_tools/impl/RunnableFreeRtos.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../esp_tools/impl/UI.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../esp_tools/impl/UItft.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../esp_tools/sm/FSM.cpp
 )
