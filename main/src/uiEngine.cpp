@@ -96,7 +96,14 @@ static_assert(sizeof(kStates) / sizeof(*kStates) == UI_STATE_COUNT, "kStates vs 
 
 const int TOP_H = 42;
 const int BOT_H = 76 - TOP_H;
-const int COL_W = 94;
+// bottom band columns, left to right. Hours fields must fit "1000:00:00" in FONT_VALUE
+enum { M_MOTOR, M_CYCLES, M_UPTIME, M_COUNT };
+struct Column { int metric; const char *title; int x; int w; };
+const Column kColumns[] = {
+	{ M_CYCLES, "Cycles",      0,   64 },
+	{ M_MOTOR,  "Motor hours", 64,  110 },
+	{ M_UPTIME, "Uptime",      174, 110 },
+};
 
 // lv_label_set_text() always invalidates; skip identical text to keep SPI quiet
 template<size_t N>
@@ -127,11 +134,7 @@ lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color, const c
 }
 
 void fmt_hms(char *buf, size_t sz, uint32_t sec) {
-	const unsigned h = sec / 3600;
-	if (h >= 100)
-		snprintf(buf, sz, "%u h", h);
-	else
-		snprintf(buf, sz, "%u:%02u:%02u", h, unsigned(sec / 60 % 60), unsigned(sec % 60));
+	snprintf(buf, sz, "%u:%02u:%02u", unsigned(sec / 3600), unsigned(sec / 60 % 60), unsigned(sec % 60));
 }
 
 void fmt_countdown(char *buf, size_t sz, uint32_t left_ms, uint32_t total_ms) {
@@ -196,15 +199,19 @@ private:
 		// bottom band: 3 metric columns
 		lv_obj_t *band = box(scr, 0, TOP_H, 284, BOT_H, C_BAND);
 		box(scr, 0, TOP_H, 284, 1, C_DIVIDER);
-		static const char *const titles[] = { "Motor hours", "Cycles", "Uptime" };
-		for (int i = 0; i < 3; ++i) {
-			const int x = 8 + i * COL_W;
-			if (i)
-				box(band, i * COL_W, 6, 1, BOT_H - 12, C_DIVIDER);
-			l = label(band, FONT_SMALL, C_LABEL, titles[i]);
-			lv_obj_set_pos(l, x, 1);
-			metric_lbl_[i] = label(band, FONT_VALUE, C_TEXT, "-");
-			lv_obj_set_pos(metric_lbl_[i], x, 14);
+		for (const Column &c : kColumns) {
+			if (c.x)
+				box(band, c.x, 6, 1, BOT_H - 12, C_DIVIDER);
+			l = label(band, FONT_SMALL, C_LABEL, c.title);
+			lv_obj_set_pos(l, c.x + 6, 1);
+			lv_obj_set_width(l, c.w - 8);
+			lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+			lv_obj_t *v = label(band, FONT_VALUE, C_TEXT, "-");
+			lv_obj_set_pos(v, c.x + 6, 14);
+			lv_obj_set_width(v, c.w - 8);
+			lv_label_set_long_mode(v, LV_LABEL_LONG_MODE_CLIP);
+			lv_obj_set_style_text_align(v, LV_TEXT_ALIGN_CENTER, 0);
+			metric_lbl_[c.metric] = v;
 		}
 	}
 
@@ -234,23 +241,23 @@ private:
 		set_text(supply_lbl_, supply_cache_, buf);
 
 		fmt_hms(buf, sizeof(buf), motor_s_);
-		set_text(metric_lbl_[0], metric_cache_[0], buf);
+		set_text(metric_lbl_[M_MOTOR], metric_cache_[M_MOTOR], buf);
 		snprintf(buf, sizeof(buf), "%lu", (unsigned long)cyc_);
-		set_text(metric_lbl_[1], metric_cache_[1], buf);
+		set_text(metric_lbl_[M_CYCLES], metric_cache_[M_CYCLES], buf);
 		fmt_hms(buf, sizeof(buf), uint32_t(esp_timer_get_time() / 1000000));
-		set_text(metric_lbl_[2], metric_cache_[2], buf);
+		set_text(metric_lbl_[M_UPTIME], metric_cache_[M_UPTIME], buf);
 	}
 
 	lv_obj_t *bar_ = nullptr;
 	lv_obj_t *state_lbl_ = nullptr;
 	lv_obj_t *timer_lbl_ = nullptr;
 	lv_obj_t *supply_lbl_ = nullptr;
-	lv_obj_t *metric_lbl_[3] = {};
+	lv_obj_t *metric_lbl_[M_COUNT] = {};
 
 	char state_cache_[24] = "";
 	char timer_cache_[16] = "";
 	char supply_cache_[16] = "";
-	char metric_cache_[3][16] = {};
+	char metric_cache_[M_COUNT][16] = {};
 	int shown_state_ = -1;
 
 	// model (written by API under lock)

@@ -7,10 +7,15 @@ idf_component_register(SRCS "hooks.c")
 # To do so, we need to define the symbol (function) `bootloader_hooks_include`
 # within hooks.c source file.
 
-if(NOT BOARD)
-	set(BOARD esp32s2_rc1)
-	message(WARNING "no BOARD set. Set to ${BOARD}")
+if(NOT BOARD AND SDKCONFIG)
+	# written by top-level CMakeLists.txt into the app build dir
+	get_filename_component(_app_build_dir "${SDKCONFIG}" DIRECTORY)
+	include("${_app_build_dir}/board.cmake" OPTIONAL)
 endif()
+if(NOT BOARD)
+	message(FATAL_ERROR "bootloader hook: BOARD is not known (no board.cmake next to ${SDKCONFIG})")
+endif()
+message(STATUS "bootloader hook: BOARD=${BOARD}")
 
 set(BOARDS_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../boards)
 

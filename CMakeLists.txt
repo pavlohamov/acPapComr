@@ -31,6 +31,10 @@ endif()
 
 message(WARNING "IDF_TARGET=${IDF_TARGET} BOARD=${BOARD}")
 
+# bootloader is built as a separate CMake project and does not see BOARD.
+# bootloader_components/hook picks it up from here (next to build/sdkconfig.prj)
+file(WRITE "${CMAKE_BINARY_DIR}/board.cmake" "set(BOARD ${BOARD})\n")
+
 if (NOT VERSION)
 	set(VERSION "0.0.0.4")
 endif()
