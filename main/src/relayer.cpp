@@ -281,52 +281,32 @@ void* Relayer::onSecond(SM::FSM *const fsm, const SM::FSM_Event *event) {
 }
 
 
+Relayer::Status Relayer::status() const {
+	const uint64_t elapsed_ms = esp_timer_get_time() / 1'000UL - last_ms_;
+	auto mk = [elapsed_ms](Phase p, uint32_t total) {
+		return Status{ p, elapsed_ms >= total ? 0 : uint32_t(total - elapsed_ms), total };
+	};
+
+	if (isInState(initialWait))
+		return mk(Phase::InitWait, INITIAL_BLANK);
+	if (isInState(waitTill))
+		return mk(Phase::Idle, CYCLE_TIME);
+	if (isInState(onFirst))
+		return mk(Phase::Purge1, RLY_PURGE_TIME_1);
+	if (isInState(waitup))
+		return mk(Phase::Pause, RLY_DLY_TIME);
+	if (isInState(onSecond))
+		return mk(Phase::Purge2, RLY_PURGE_TIME_2);
+	return Status{ Phase::Boot, 0, 0 };
+}
+
 std::string Relayer::info() const {
-	if (isInState(initialWait)) {
-		const uint64_t elapsed_ms = esp_timer_get_time() / 1'000UL - last_ms_;
-		const uint32_t left = INITIAL_BLANK - elapsed_ms;
-
-		char text[129];
-		snprintf(text, sizeof(text), "init wait %lu/%u sec", left / 1000, INITIAL_BLANK / 1000);
-		return text;
-	}
-
-	if (isInState(waitTill)) {
-		const uint64_t elapsed_ms = esp_timer_get_time() / 1'000UL - last_ms_;
-		const uint32_t left = CYCLE_TIME - elapsed_ms;
-
-		char text[129];
-		snprintf(text, sizeof(text), "     wait %lu/%u sec", left / 1000, CYCLE_TIME / 1000);
-	}
-
-	if (isInState(onFirst)) {
-		const uint64_t elapsed_ms = esp_timer_get_time() / 1'000UL - last_ms_;
-		const uint32_t left = RLY_PURGE_TIME_1 - elapsed_ms;
-
-		char text[129];
-		snprintf(text, sizeof(text), "   ON OFF %lu/%u ms", left, RLY_PURGE_TIME_1);
-		return "";
-	}
-
-	if (isInState(waitup)) {
-		const uint64_t elapsed_ms = esp_timer_get_time() / 1'000UL - last_ms_;
-		const uint32_t left = RLY_PURGE_TIME_1 - elapsed_ms;
-
-		char text[129];
-		snprintf(text, sizeof(text), "  OFF OFF %lu/%u ms", left, RLY_DLY_TIME);
-		return "";
-	}
-
-	if (isInState(onSecond)) {
-		const uint64_t elapsed_ms = esp_timer_get_time() / 1'000UL - last_ms_;
-		const uint32_t left = RLY_PURGE_TIME_1 - elapsed_ms;
-
-		char text[129];
-		snprintf(text, sizeof(text), "  OFF  ON %lu/%u ms", left, RLY_PURGE_TIME_1);
-		return "";
-	}
-
-	return "wtf?!";
+	static const char *const names[] = { "boot", "init wait", "wait", "ON OFF", "OFF OFF", "OFF ON" };
+	const Status st = status();
+	char text[64];
+	snprintf(text, sizeof(text), "%s %lu/%lu ms", names[int(st.phase)],
+			(unsigned long)st.left_ms, (unsigned long)st.total_ms);
+	return text;
 }
 
 void Relayer::run() {

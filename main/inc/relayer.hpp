@@ -54,6 +54,14 @@ public:
     		static void* waitup(SM::FSM *const fsm, const SM::FSM_Event *event);
     		static void* onSecond(SM::FSM *const fsm, const SM::FSM_Event *event);
 
+	enum class Phase { Boot, InitWait, Idle, Purge1, Pause, Purge2 };
+	struct Status {
+		Phase phase;
+		uint32_t left_ms;
+		uint32_t total_ms;
+	};
+	Status status() const;
+
 	std::string info() const;
 
 protected:

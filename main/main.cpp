@@ -442,6 +442,7 @@ extern "C" void app_main() {
 
 	const uint32_t startAt = esp_timer_get_time() / 1000ULL;
 	uint64_t saveAt_ms = startAt;
+	uint64_t faultUntil_ms = 0;
 	while (1) {
 		const uint64_t now_ms = esp_timer_get_time() / 1000ULL;
 		const uint32_t currUptime = (now_ms - startAt) / 1000ULL + worked4;
@@ -451,7 +452,14 @@ extern "C" void app_main() {
 			ESP_ERROR_CHECK(adc_cali_raw_to_voltage(s_adc_caibration, s_battVoltage, &voltage));
 			voltage = voltage * BOARD_CFG_ADC_RATIO_MV;
 			UiEngine_SetData(motorhours.cycles, voltage + 280, 0, currUptime);
-			UiEngine_SetText(relayer.info().c_str());
+			const Relayer::Status rs = relayer.status();
+			static const UiState_t phase2ui[] = {
+				UI_STATE_BOOT, UI_STATE_STARTING, UI_STATE_IDLE, UI_STATE_PURGE_1, UI_STATE_PAUSE, UI_STATE_PURGE_2,
+			};
+			if (now_ms < faultUntil_ms)
+				UiEngine_SetState(UI_STATE_FAULT, 0, 0);
+			else
+				UiEngine_SetState(phase2ui[int(rs.phase)], rs.left_ms, rs.total_ms);
 			if (now_ms - saveAt_ms > SAVE_PERIOD_MS)
 				sig = EVT_Save2storage;
 		}
@@ -459,6 +467,7 @@ extern "C" void app_main() {
 		switch (sig) {
 			case EVT_Brownout:
 				ESP_LOGE(TAG, "brownout");
+				faultUntil_ms = now_ms + 3000;
 				break;
 			case EVT_Save2storage: {
 				motorhours.cycles = clycled4 + relayer.cycles();
